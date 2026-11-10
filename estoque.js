@@ -983,15 +983,6 @@ function performLogin(rawUsername, rawPassword) {
     return true;
 }
 
-function fillQuickLogin(username, password) {
-    const userInp = document.getElementById('loginUsername');
-    const passInp = document.getElementById('loginPassword');
-    if (userInp) userInp.value = username;
-    if (passInp) passInp.value = password;
-    performLogin(username, password);
-}
-window.fillQuickLogin = fillQuickLogin;
-
 function hasTabPermission(tabId) {
     if (!currentUser) return false;
     if (currentUser.isMaster || currentUser.rolePreset === 'MASTER') return true;

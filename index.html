@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=3.6">
+    <link rel="stylesheet" href="style.css?v=3.7">
 </head>
 <body>
     <!-- TELA DE LOGIN E CONTROLE DE ACESSO (RBAC) -->
@@ -30,7 +30,7 @@
             <form id="loginForm" class="login-form">
                 <div class="form-group">
                     <label for="loginUsername">Usuário / Login de Acesso *</label>
-                    <input type="text" id="loginUsername" required placeholder="Ex: kelvin" autocomplete="username">
+                    <input type="text" id="loginUsername" required placeholder="Digite seu usuário..." autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label for="loginPassword">Senha *</label>
@@ -43,21 +43,6 @@
                     Entrar no Sistema
                 </button>
             </form>
-
-            <div class="login-quick-accounts">
-                <span class="quick-acc-title">Acesso Rápido (Demonstração / Testes de Permissão):</span>
-                <div class="quick-acc-buttons">
-                    <button type="button" class="btn btn-outline btn-sm" onclick="fillQuickLogin('kelvin', 'admin123')">
-                        👑 Master (kelvin)
-                    </button>
-                    <button type="button" class="btn btn-outline btn-sm" onclick="fillQuickLogin('fernanda.t3', 'lider123')">
-                        📋 Líder Turno (fernanda.t3)
-                    </button>
-                    <button type="button" class="btn btn-outline btn-sm" onclick="fillQuickLogin('lucas.op', 'op123')">
-                        📦 Operador (lucas.op)
-                    </button>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -1398,7 +1383,7 @@
     <div id="toastContainer" class="toast-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js?v=3.6"></script>
-    <script src="estoque.js?v=3.6"></script>
+    <script src="supabase-config.js?v=3.7"></script>
+    <script src="estoque.js?v=3.7"></script>
 </body>
 </html>

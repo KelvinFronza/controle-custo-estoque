@@ -1,4 +1,8 @@
 const STORAGE_KEY = 'site_leader_inventory_v1';
+const SESSION_USER_KEY = 'cd_logged_user_v1';
+
+// Usuário autenticado na sessão atual
+let currentUser = null;
 
 // Estado global corporativo (Macro & Micro do CD)
 let state = {
@@ -9,7 +13,8 @@ let state = {
     movements: [],
     loans: [],
     handovers: [],
-    employees: []
+    employees: [],
+    users: []
 };
 
 // Formatadores executivos
@@ -465,11 +470,108 @@ function getInitialDemoData() {
                 snapshotCriticals: 3
             }
         ],
-        employees: getInitialEmployeesDemo()
+        employees: getInitialEmployeesDemo(),
+        users: getInitialUsersDemo()
     };
 }
 
-// Persistência local com migração automática da base de RH
+// Matriz de Perfis e Usuários Iniciais (Kelvin Master + Líder + Operador)
+function getRolePresetPermissions(preset) {
+    if (preset === 'MASTER') {
+        return {
+            tabs: ['dashboard', 'rh', 'analytics', 'produtos', 'movimentacoes', 'cautelas', 'handover', 'relatorios', 'usuarios'],
+            actions: {
+                viewFinancials: true,
+                manageProducts: true,
+                registerMovements: true,
+                manageLoans: true,
+                auditStock: true,
+                manageHr: true
+            }
+        };
+    }
+    if (preset === 'LIDER') {
+        return {
+            tabs: ['dashboard', 'produtos', 'movimentacoes', 'cautelas', 'handover', 'relatorios'],
+            actions: {
+                viewFinancials: true,
+                manageProducts: true,
+                registerMovements: true,
+                manageLoans: true,
+                auditStock: true,
+                manageHr: false
+            }
+        };
+    }
+    if (preset === 'RH') {
+        return {
+            tabs: ['dashboard', 'rh', 'cautelas', 'relatorios'],
+            actions: {
+                viewFinancials: true,
+                manageProducts: false,
+                registerMovements: false,
+                manageLoans: true,
+                auditStock: false,
+                manageHr: true
+            }
+        };
+    }
+    // OPERADOR padrão
+    return {
+        tabs: ['produtos', 'movimentacoes', 'cautelas'],
+        actions: {
+            viewFinancials: false,
+            manageProducts: false,
+            registerMovements: true,
+            manageLoans: true,
+            auditStock: false,
+            manageHr: false
+        }
+    };
+}
+
+function getInitialUsersDemo() {
+    return [
+        {
+            id: 'usr_master_kelvin',
+            username: 'kelvin',
+            password: 'admin123',
+            name: 'Kelvin (Site Leader Master)',
+            rolePreset: 'MASTER',
+            roleLabel: 'Master / Site Leader',
+            isMaster: true,
+            shift: 'Todos',
+            status: 'ATIVO',
+            permissions: getRolePresetPermissions('MASTER')
+        },
+        {
+            id: 'usr_lider_fernanda',
+            username: 'fernanda.t3',
+            password: 'lider123',
+            name: 'Fernanda Costa',
+            rolePreset: 'LIDER',
+            roleLabel: 'Líder de Turno',
+            isMaster: false,
+            shift: 'T3 - Noite',
+            status: 'ATIVO',
+            permissions: getRolePresetPermissions('LIDER')
+        },
+        {
+            id: 'usr_op_lucas',
+            username: 'lucas.op',
+            password: 'op123',
+            name: 'Lucas Mendonça',
+            rolePreset: 'OPERADOR',
+            roleLabel: 'Operador Logístico',
+            isMaster: false,
+            shift: 'T1 - Manhã',
+            status: 'ATIVO',
+            permissions: getRolePresetPermissions('OPERADOR')
+        }
+    ];
+}
+
+// Persistência local com migração automática da base de RH e Usuários
 function loadState() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
@@ -487,7 +589,11 @@ function loadState() {
                 employees:
                     Array.isArray(parsed.employees) && parsed.employees.length > 0
                         ? parsed.employees
-                        : demo.employees
+                        : demo.employees,
+                users:
+                    Array.isArray(parsed.users) && parsed.users.length > 0
+                        ? parsed.users
+                        : demo.users
             };
             saveState();
         } else {
@@ -796,6 +902,89 @@ function getMovementTypeBadge(type) {
     }
 }
 
+// ============================================================================
+// CONTROLE DE AUTENTICAÇÃO E PERMISSÕES (RBAC MASTER)
+// ============================================================================
+
+function fillQuickLogin(username, password) {
+    document.getElementById('loginUsername').value = username;
+    document.getElementById('loginPassword').value = password;
+    document.getElementById('loginErrorMsg').style.display = 'none';
+}
+
+function hasTabPermission(tabId) {
+    if (!currentUser) return false;
+    if (currentUser.isMaster || currentUser.rolePreset === 'MASTER') return true;
+    const tabs = (currentUser.permissions && currentUser.permissions.tabs) || [];
+    return tabs.includes(tabId);
+}
+
+function hasActionPermission(actionKey) {
+    if (!currentUser) return false;
+    if (currentUser.isMaster || currentUser.rolePreset === 'MASTER') return true;
+    const actions = (currentUser.permissions && currentUser.permissions.actions) || {};
+    return Boolean(actions[actionKey]);
+}
+
+function requireActionPermission(actionKey, actionName) {
+    if (hasActionPermission(actionKey)) return true;
+    showToast(`Acesso negado: seu usuário (${currentUser ? currentUser.username : ''}) não tem permissão para "${actionName}". Solicite ao Usuário Master.`, 'error');
+    return false;
+}
+
+function applyUserPermissions() {
+    if (!currentUser) return;
+
+    const userNameEl = document.getElementById('sidebarUserName');
+    const userRoleEl = document.getElementById('sidebarUserRole');
+    if (userNameEl) userNameEl.textContent = currentUser.name;
+    if (userRoleEl) userRoleEl.textContent = currentUser.isMaster ? 'MASTER' : currentUser.rolePreset || 'OPERADOR';
+
+    // Controla visibilidade das abas da Sidebar conforme permissão do usuário
+    let firstAllowedTab = null;
+    document.querySelectorAll('.nav-btn').forEach((btn) => {
+        const tabId = btn.dataset.tab;
+        const allowed = hasTabPermission(tabId);
+        btn.style.display = allowed ? 'flex' : 'none';
+        if (allowed && !firstAllowedTab) firstAllowedTab = tabId;
+    });
+
+    // Verifica se a aba ativa atual é permitida; se não, redireciona para a primeira permitida
+    const activeBtn = document.querySelector('.nav-btn.active');
+    const currentTabId = activeBtn ? activeBtn.dataset.tab : 'dashboard';
+    if (!hasTabPermission(currentTabId) && firstAllowedTab) {
+        document.querySelectorAll('.nav-btn').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.tab === firstAllowedTab);
+        });
+        document.querySelectorAll('.tab-panel').forEach((panel) => {
+            panel.classList.toggle('active', panel.id === `tab-${firstAllowedTab}`);
+        });
+    }
+
+    // Controla botões de ação rápida no topo conforme permissões granulares
+    const btnMap = [
+        { id: 'quickNewProductBtn', perm: 'manageProducts' },
+        { id: 'quickNewEmployeeBtn', perm: 'manageHr' },
+        { id: 'newEmployeeFromTabBtn', perm: 'manageHr' },
+        { id: 'quickMovementBtn', perm: 'registerMovements' },
+        { id: 'newMovementFromTabBtn', perm: 'registerMovements' },
+        { id: 'quickLoanBtn', perm: 'manageLoans' },
+        { id: 'newLoanFromTabBtn', perm: 'manageLoans' },
+        { id: 'quickAuditBtn', perm: 'auditStock' }
+    ];
+
+    btnMap.forEach(({ id, perm }) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = hasActionPermission(perm) ? 'inline-flex' : 'none';
+    });
+
+    // Oculta faixa de custos macro se o operador não tiver permissão financeira
+    const macroBanner = document.querySelector('.macro-banner-grid');
+    if (macroBanner) {
+        macroBanner.style.display = hasActionPermission('viewFinancials') ? 'grid' : 'none';
+    }
+}
+
 // Renderização Global
 function renderAll() {
     document.getElementById('siteNameInput').value = state.siteName;
@@ -812,7 +1001,9 @@ function renderAll() {
     renderMovementsTable();
     renderLoansTable();
     renderHandovers();
+    renderUsersModule();
     updateSidebarBadges();
+    applyUserPermissions();
 }
 
 function updateSidebarBadges() {
@@ -1703,6 +1894,212 @@ function renderHandovers() {
         .join('');
 }
 
+// TAB 9: GESTÃO DE USUÁRIOS & PERMISSÕES (RBAC MASTER)
+function renderUsersModule() {
+    const users = state.users || [];
+    const masters = users.filter((u) => u.isMaster || u.rolePreset === 'MASTER');
+    const active = users.filter((u) => u.status === 'ATIVO');
+    const blocked = users.filter((u) => u.status === 'BLOQUEADO');
+
+    const elTotal = document.getElementById('usrKpiTotal');
+    if (!elTotal) return;
+    elTotal.textContent = users.length;
+    document.getElementById('usrKpiMasters').textContent = masters.length;
+    document.getElementById('usrKpiActive').textContent = active.length;
+    document.getElementById('usrKpiBlocked').textContent = blocked.length;
+
+    const tabNamesMap = {
+        dashboard: 'Dashboard',
+        rh: 'RH & Turnover',
+        analytics: 'Curva ABC',
+        produtos: 'Estoque SKUs',
+        movimentacoes: 'Kardex',
+        cautelas: 'Cautelas',
+        handover: 'Passagem Turno',
+        relatorios: 'CSV & Dados',
+        usuarios: 'Master Admin'
+    };
+
+    const actionNamesMap = {
+        viewFinancials: 'Ver Custos (R$)',
+        manageProducts: 'Criar/Editar SKUs',
+        registerMovements: 'Movimentar Kardex',
+        manageLoans: 'Gerenciar Cautelas',
+        auditStock: 'Auditoria Inv.',
+        manageHr: 'Gerenciar RH'
+    };
+
+    const tbody = document.getElementById('usersTableBody');
+    tbody.innerHTML = users
+        .map((u) => {
+            const tabs = u.isMaster
+                ? Object.keys(tabNamesMap)
+                : (u.permissions && u.permissions.tabs) || [];
+            const actionsObj = u.isMaster
+                ? {
+                      viewFinancials: true,
+                      manageProducts: true,
+                      registerMovements: true,
+                      manageLoans: true,
+                      auditStock: true,
+                      manageHr: true
+                  }
+                : (u.permissions && u.permissions.actions) || {};
+
+            const tabsHtml = tabs
+                .map((t) => `<span class="perm-tag">${escapeHtml(tabNamesMap[t] || t)}</span>`)
+                .join('');
+            const actionsHtml = Object.entries(actionsObj)
+                .filter(([, val]) => Boolean(val))
+                .map(([k]) => `<span class="perm-tag action">${escapeHtml(actionNamesMap[k] || k)}</span>`)
+                .join('');
+
+            const isBlocked = u.status === 'BLOQUEADO';
+            return `
+            <tr>
+                <td><span class="sku-code">${escapeHtml(u.username)}</span></td>
+                <td>
+                    <strong>${escapeHtml(u.name)}</strong>
+                    <div class="text-muted" style="font-size:11px;">Senha: <code>${escapeHtml(u.password)}</code></div>
+                </td>
+                <td>
+                    <span class="abc-pill ${u.isMaster ? 'abc-A' : 'abc-B'}">
+                        ${u.isMaster ? '👑 MASTER' : escapeHtml(u.roleLabel || u.rolePreset)}
+                    </span>
+                </td>
+                <td>${escapeHtml(u.shift || 'Todos')}</td>
+                <td><div class="perm-pill-list">${tabsHtml || '<span class="text-muted">Nenhuma</span>'}</div></td>
+                <td><div class="perm-pill-list">${actionsHtml || '<span class="text-muted">Somente Leitura</span>'}</div></td>
+                <td>
+                    <span class="badge ${isBlocked ? 'badge-zero' : 'badge-ok'}">
+                        ${isBlocked ? 'Bloqueado' : 'Ativo'}
+                    </span>
+                </td>
+                <td class="text-right">
+                    <div class="action-group">
+                        <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Permissões / Senha</button>
+                        ${
+                            u.username !== 'kelvin'
+                                ? `<button class="btn btn-sm btn-outline" onclick="toggleUserBlock('${u.id}')">${isBlocked ? 'Desbloquear' : 'Bloquear'}</button>
+                                   <button class="btn btn-sm btn-outline" style="color:var(--danger)" onclick="deleteUser('${u.id}')">✕</button>`
+                                : ''
+                        }
+                    </div>
+                </td>
+            </tr>
+        `;
+        })
+        .join('');
+}
+
+function applyUserPresetToModal(preset) {
+    if (preset === 'CUSTOM') return;
+    const perms = getRolePresetPermissions(preset);
+    const t = perms.tabs;
+    const a = perms.actions;
+
+    document.getElementById('permTabDashboard').checked = t.includes('dashboard');
+    document.getElementById('permTabRh').checked = t.includes('rh');
+    document.getElementById('permTabAnalytics').checked = t.includes('analytics');
+    document.getElementById('permTabProdutos').checked = t.includes('produtos');
+    document.getElementById('permTabMovimentacoes').checked = t.includes('movimentacoes');
+    document.getElementById('permTabCautelas').checked = t.includes('cautelas');
+    document.getElementById('permTabHandover').checked = t.includes('handover');
+    document.getElementById('permTabRelatorios').checked = t.includes('relatorios');
+    document.getElementById('permTabUsuarios').checked = t.includes('usuarios');
+
+    document.getElementById('permActViewFinancials').checked = Boolean(a.viewFinancials);
+    document.getElementById('permActManageProducts').checked = Boolean(a.manageProducts);
+    document.getElementById('permActRegisterMovements').checked = Boolean(a.registerMovements);
+    document.getElementById('permActManageLoans').checked = Boolean(a.manageLoans);
+    document.getElementById('permActAuditStock').checked = Boolean(a.auditStock);
+    document.getElementById('permActManageHr').checked = Boolean(a.manageHr);
+}
+
+function openNewUserModal() {
+    if (!currentUser || (!currentUser.isMaster && currentUser.rolePreset !== 'MASTER')) {
+        showToast('Apenas o Usuário Master pode cadastrar ou alterar usuários.', 'error');
+        return;
+    }
+    document.getElementById('userModalTitle').textContent = 'Cadastrar Novo Usuário & Definir Permissões';
+    document.getElementById('userForm').reset();
+    document.getElementById('usrId').value = '';
+    document.getElementById('usrUsername').disabled = false;
+    document.getElementById('usrRolePreset').value = 'OPERADOR';
+    applyUserPresetToModal('OPERADOR');
+    openModal('userModal');
+}
+
+function openEditUserModal(userId) {
+    if (!currentUser || (!currentUser.isMaster && currentUser.rolePreset !== 'MASTER')) {
+        showToast('Apenas o Usuário Master pode alterar permissões.', 'error');
+        return;
+    }
+    const u = (state.users || []).find((item) => item.id === userId);
+    if (!u) return;
+
+    document.getElementById('userModalTitle').textContent = `Configurar Permissões: ${u.name} (${u.username})`;
+    document.getElementById('usrId').value = u.id;
+    document.getElementById('usrUsername').value = u.username;
+    document.getElementById('usrPassword').value = u.password;
+    document.getElementById('usrName').value = u.name;
+    document.getElementById('usrRolePreset').value = u.rolePreset || 'CUSTOM';
+    document.getElementById('usrShift').value = u.shift || 'Todos';
+    document.getElementById('usrStatus').value = u.status || 'ATIVO';
+
+    const t = u.isMaster
+        ? ['dashboard', 'rh', 'analytics', 'produtos', 'movimentacoes', 'cautelas', 'handover', 'relatorios', 'usuarios']
+        : (u.permissions && u.permissions.tabs) || [];
+    const a = u.isMaster
+        ? {
+              viewFinancials: true,
+              manageProducts: true,
+              registerMovements: true,
+              manageLoans: true,
+              auditStock: true,
+              manageHr: true
+          }
+        : (u.permissions && u.permissions.actions) || {};
+
+    document.getElementById('permTabDashboard').checked = t.includes('dashboard');
+    document.getElementById('permTabRh').checked = t.includes('rh');
+    document.getElementById('permTabAnalytics').checked = t.includes('analytics');
+    document.getElementById('permTabProdutos').checked = t.includes('produtos');
+    document.getElementById('permTabMovimentacoes').checked = t.includes('movimentacoes');
+    document.getElementById('permTabCautelas').checked = t.includes('cautelas');
+    document.getElementById('permTabHandover').checked = t.includes('handover');
+    document.getElementById('permTabRelatorios').checked = t.includes('relatorios');
+    document.getElementById('permTabUsuarios').checked = t.includes('usuarios');
+
+    document.getElementById('permActViewFinancials').checked = Boolean(a.viewFinancials);
+    document.getElementById('permActManageProducts').checked = Boolean(a.manageProducts);
+    document.getElementById('permActRegisterMovements').checked = Boolean(a.registerMovements);
+    document.getElementById('permActManageLoans').checked = Boolean(a.manageLoans);
+    document.getElementById('permActAuditStock').checked = Boolean(a.auditStock);
+    document.getElementById('permActManageHr').checked = Boolean(a.manageHr);
+
+    openModal('userModal');
+}
+
+function toggleUserBlock(userId) {
+    const u = (state.users || []).find((item) => item.id === userId);
+    if (!u || u.username === 'kelvin') return;
+    u.status = u.status === 'BLOQUEADO' ? 'ATIVO' : 'BLOQUEADO';
+    saveState();
+    renderAll();
+    showToast(`Status do usuário ${u.username} alterado para ${u.status}.`, 'success');
+}
+
+function deleteUser(userId) {
+    const u = (state.users || []).find((item) => item.id === userId);
+    if (!u || u.username === 'kelvin') return;
+    if (!confirm(`Deseja realmente excluir o usuário "${u.username} - ${u.name}"?`)) return;
+    state.users = state.users.filter((item) => item.id !== userId);
+    saveState();
+    renderAll();
+    showToast(`Usuário ${u.username} removido.`, 'success');
+}
+
 // Modais
 function openModal(modalId) {
     document.getElementById(modalId).classList.add('open');
@@ -1714,6 +2111,7 @@ function closeModal(modalId) {
 
 // Modal de Colaborador (RH)
 function openNewEmployeeModal() {
+    if (!requireActionPermission('manageHr', 'Cadastrar Colaboradores no RH')) return;
     document.getElementById('employeeModalTitle').textContent = 'Cadastrar Novo Colaborador no CD (RH & Folha)';
     document.getElementById('employeeForm').reset();
     document.getElementById('empId').value = '';
@@ -1728,6 +2126,7 @@ function openNewEmployeeModal() {
 }
 
 function openEditEmployeeModal(empId) {
+    if (!requireActionPermission('manageHr', 'Editar Colaboradores no RH')) return;
     const e = (state.employees || []).find((item) => item.id === empId);
     if (!e) return;
 
@@ -1753,6 +2152,7 @@ function openEditEmployeeModal(empId) {
 }
 
 function deleteEmployee(empId) {
+    if (!requireActionPermission('manageHr', 'Excluir Colaboradores no RH')) return;
     const e = (state.employees || []).find((item) => item.id === empId);
     if (!e) return;
     if (!confirm(`Deseja realmente excluir o cadastro do colaborador "${e.code} - ${e.name}"?`)) return;
@@ -1784,6 +2184,7 @@ function updateEmployeeCostPreview() {
 
 // Modal de Produto
 function openNewProductModal() {
+    if (!requireActionPermission('manageProducts', 'Cadastrar Novo SKU')) return;
     document.getElementById('productModalTitle').textContent = 'Cadastrar Novo SKU no Catálogo';
     document.getElementById('productForm').reset();
     document.getElementById('prodId').value = '';
@@ -1793,6 +2194,7 @@ function openNewProductModal() {
 }
 
 function openEditProductModal(productId) {
+    if (!requireActionPermission('manageProducts', 'Editar SKU')) return;
     const p = state.products.find((item) => item.id === productId);
     if (!p) return;
 
@@ -1811,6 +2213,7 @@ function openEditProductModal(productId) {
 }
 
 function deleteProduct(productId) {
+    if (!requireActionPermission('manageProducts', 'Excluir SKU')) return;
     const p = state.products.find((item) => item.id === productId);
     if (!p) return;
     if (!confirm(`Confirmar exclusão definitiva do SKU "${p.sku} - ${p.name}"?`)) return;
@@ -1823,6 +2226,7 @@ function deleteProduct(productId) {
 
 // Modal de Movimentação
 function openMovementModal(preselectedProductId = null, preselectedType = 'IN') {
+    if (!requireActionPermission('registerMovements', 'Lançar Movimentações no Kardex')) return;
     if (state.products.length === 0) {
         showToast('Cadastre ao menos um SKU antes de movimentar o estoque.', 'error');
         return;
@@ -1841,7 +2245,7 @@ function openMovementModal(preselectedProductId = null, preselectedType = 'IN') 
     document.getElementById('movType').value = preselectedType;
     document.getElementById('movQty').value = 1;
     document.getElementById('movShift').value = state.activeShift;
-    document.getElementById('movResponsible').value = `${state.siteLeaderName || 'Kelvin'} (Site Leader)`;
+    document.getElementById('movResponsible').value = currentUser ? currentUser.name : `${state.siteLeaderName || 'Kelvin'} (Site Leader)`;
     document.getElementById('movReason').value = '';
     updateMovementStockPreview();
     openModal('movementModal');
@@ -1882,6 +2286,7 @@ function updateMovementStockPreview() {
 
 // Modal de Auditoria Rápida
 function openAuditModal() {
+    if (!requireActionPermission('auditStock', 'Realizar Auditoria de Inventário')) return;
     if (state.products.length === 0) {
         showToast('Não há SKUs cadastrados para auditar.', 'error');
         return;
@@ -1922,6 +2327,7 @@ function updateAuditVariancePreview() {
 
 // Modal de Nova Cautela integrado ao RH
 function openLoanModal() {
+    if (!requireActionPermission('manageLoans', 'Emitir Cautela de Equipamento')) return;
     const availableProducts = state.products.filter((p) => (Number(p.quantity) || 0) > 0);
     if (availableProducts.length === 0) {
         showToast('Não há itens com saldo disponível para cautela.', 'error');
@@ -1958,6 +2364,7 @@ function openLoanModal() {
 }
 
 function returnLoan(loanId) {
+    if (!requireActionPermission('manageLoans', 'Confirmar Devolução de Cautela')) return;
     const loan = state.loans.find((l) => l.id === loanId);
     if (!loan || loan.status === 'RETURNED') return;
 
@@ -2079,10 +2486,166 @@ function downloadCsv(filename, headers, rows) {
 // Inicialização e Eventos
 document.addEventListener('DOMContentLoaded', () => {
     loadState();
+
+    //Restaura sessão logada se existir e ainda estiver ativa
+    const savedSessionUsername = sessionStorage.getItem(SESSION_USER_KEY);
+    if (savedSessionUsername) {
+        const found = (state.users || []).find(
+            (u) => u.username.toLowerCase() === savedSessionUsername.toLowerCase() && u.status === 'ATIVO'
+        );
+        if (found) {
+            currentUser = found;
+            document.getElementById('loginOverlay').classList.add('hidden');
+        }
+    }
+
     renderAll();
     if (initSupabaseClient()) {
         pullStateFromSupabase(false);
     }
+
+    // Autenticação de Login e Senha
+    document.getElementById('loginForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const username = document.getElementById('loginUsername').value.trim().toLowerCase();
+        const password = document.getElementById('loginPassword').value;
+        const errBox = document.getElementById('loginErrorMsg');
+
+        const user = (state.users || []).find(
+            (u) => u.username.toLowerCase() === username && u.password === password
+        );
+
+        if (!user) {
+            errBox.textContent = 'Login ou senha inválidos. Verifique suas credenciais.';
+            errBox.style.display = 'block';
+            return;
+        }
+
+        if (user.status === 'BLOQUEADO') {
+            errBox.textContent = 'Esta conta foi bloqueada pelo Usuário Master.';
+            errBox.style.display = 'block';
+            return;
+        }
+
+        errBox.style.display = 'none';
+        currentUser = user;
+        sessionStorage.setItem(SESSION_USER_KEY, user.username);
+        document.getElementById('loginOverlay').classList.add('hidden');
+        renderAll();
+        showToast(`Bem-vindo(a), ${user.name}!`, 'success');
+    });
+
+    // Logout / Trocar Usuário
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+        currentUser = null;
+        sessionStorage.removeItem(SESSION_USER_KEY);
+        document.getElementById('loginForm').reset();
+        document.getElementById('loginErrorMsg').style.display = 'none';
+        document.getElementById('loginOverlay').classList.remove('hidden');
+        showToast('Sessão encerrada com segurança.', 'primary');
+    });
+
+    // Eventos do Modal de Usuários & Permissões (Master)
+    const newUserBtn = document.getElementById('newUserBtn');
+    if (newUserBtn) newUserBtn.addEventListener('click', openNewUserModal);
+
+    const rolePresetSelect = document.getElementById('usrRolePreset');
+    if (rolePresetSelect) {
+        rolePresetSelect.addEventListener('change', (e) => applyUserPresetToModal(e.target.value));
+    }
+
+    document.getElementById('userForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const id = document.getElementById('usrId').value;
+        const username = document.getElementById('usrUsername').value.trim().toLowerCase();
+        const password = document.getElementById('usrPassword').value.trim();
+        const name = document.getElementById('usrName').value.trim();
+        const rolePreset = document.getElementById('usrRolePreset').value;
+        const shift = document.getElementById('usrShift').value;
+        const status = document.getElementById('usrStatus').value;
+
+        const duplicate = (state.users || []).find(
+            (u) => u.username.toLowerCase() === username && u.id !== id
+        );
+        if (duplicate) {
+            showToast(`O login "${username}" já está cadastrado.`, 'error');
+            return;
+        }
+
+        const tabs = [];
+        if (document.getElementById('permTabDashboard').checked) tabs.push('dashboard');
+        if (document.getElementById('permTabRh').checked) tabs.push('rh');
+        if (document.getElementById('permTabAnalytics').checked) tabs.push('analytics');
+        if (document.getElementById('permTabProdutos').checked) tabs.push('produtos');
+        if (document.getElementById('permTabMovimentacoes').checked) tabs.push('movimentacoes');
+        if (document.getElementById('permTabCautelas').checked) tabs.push('cautelas');
+        if (document.getElementById('permTabHandover').checked) tabs.push('handover');
+        if (document.getElementById('permTabRelatorios').checked) tabs.push('relatorios');
+        if (document.getElementById('permTabUsuarios').checked) tabs.push('usuarios');
+
+        if (tabs.length === 0) {
+            showToast('Selecione pelo menos 1 módulo/tela para o usuário acessar.', 'error');
+            return;
+        }
+
+        const actions = {
+            viewFinancials: document.getElementById('permActViewFinancials').checked,
+            manageProducts: document.getElementById('permActManageProducts').checked,
+            registerMovements: document.getElementById('permActRegisterMovements').checked,
+            manageLoans: document.getElementById('permActManageLoans').checked,
+            auditStock: document.getElementById('permActAuditStock').checked,
+            manageHr: document.getElementById('permActManageHr').checked
+        };
+
+        const roleLabels = {
+            MASTER: 'Master / Site Leader',
+            LIDER: 'Líder de Turno',
+            OPERADOR: 'Operador Logístico',
+            RH: 'Analista de RH',
+            CUSTOM: 'Perfil Personalizado'
+        };
+
+        const isMaster = rolePreset === 'MASTER' || username === 'kelvin';
+
+        if (id) {
+            const existing = state.users.find((u) => u.id === id);
+            if (existing) {
+                Object.assign(existing, {
+                    username,
+                    password,
+                    name,
+                    rolePreset,
+                    roleLabel: roleLabels[rolePreset] || 'Personalizado',
+                    isMaster,
+                    shift,
+                    status: username === 'kelvin' ? 'ATIVO' : status,
+                    permissions: { tabs, actions }
+                });
+                if (currentUser && currentUser.id === existing.id) {
+                    currentUser = existing;
+                }
+                showToast(`Permissões do usuário ${username} atualizadas!`, 'success');
+            }
+        } else {
+            state.users.push({
+                id: 'usr_' + Date.now(),
+                username,
+                password,
+                name,
+                rolePreset,
+                roleLabel: roleLabels[rolePreset] || 'Personalizado',
+                isMaster,
+                shift,
+                status,
+                permissions: { tabs, actions }
+            });
+            showToast(`Usuário ${username} criado com sucesso!`, 'success');
+        }
+
+        saveState();
+        renderAll();
+        closeModal('userModal');
+    });
 
     const saveSbBtn = document.getElementById('saveSupabaseConfigBtn');
     if (saveSbBtn) {
@@ -2153,10 +2716,18 @@ document.addEventListener('DOMContentLoaded', () => {
         relatorios: {
             title: 'Central de Dados, Exportação Excel (CSV) & Backup',
             subtitle: 'Extração de relatórios gerenciais (RH, Folha, Estoque, Kardex) e importação em lote'
+        },
+        usuarios: {
+            title: 'Gestão de Usuários, Senhas & Matriz de Permissões (Master)',
+            subtitle: 'Controle de acesso ao sistema: habilite ou restrinja telas e funcionalidades para cada operador'
         }
     };
 
     function switchTab(tabId) {
+        if (currentUser && !hasTabPermission(tabId)) {
+            showToast('Acesso restrito: seu usuário não tem permissão para acessar este módulo.', 'error');
+            return;
+        }
         document.querySelectorAll('.nav-btn').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.tab === tabId);
         });

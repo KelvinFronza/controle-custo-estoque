@@ -10,6 +10,57 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- TELA DE LOGIN E CONTROLE DE ACESSO (RBAC) -->
+    <div id="loginOverlay" class="login-overlay">
+        <div class="login-card">
+            <div class="login-brand">
+                <div class="logo-badge">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="24" height="24">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                        <path d="M2 17l10 5 10-5"/>
+                        <path d="M2 12l10 5 10-5"/>
+                    </svg>
+                </div>
+                <div>
+                    <h2>Controle de Custos e Estoque</h2>
+                    <span>Portal Corporativo de Acesso ao CD • ERP v3.5</span>
+                </div>
+            </div>
+
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label for="loginUsername">Usuário / Login de Acesso *</label>
+                    <input type="text" id="loginUsername" required placeholder="Ex: kelvin" autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Senha *</label>
+                    <input type="password" id="loginPassword" required placeholder="Digite sua senha..." autocomplete="current-password">
+                </div>
+                <div id="loginErrorMsg" class="login-error" style="display:none">
+                    Usuário ou senha incorretos, ou conta bloqueada pelo Master.
+                </div>
+                <button type="submit" class="btn btn-primary w-full login-submit-btn">
+                    Entrar no Sistema
+                </button>
+            </form>
+
+            <div class="login-quick-accounts">
+                <span class="quick-acc-title">Acesso Rápido (Demonstração / Testes de Permissão):</span>
+                <div class="quick-acc-buttons">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="fillQuickLogin('kelvin', 'admin123')">
+                        👑 Master (kelvin)
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="fillQuickLogin('fernanda.t3', 'lider123')">
+                        📋 Líder Turno (fernanda.t3)
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="fillQuickLogin('lucas.op', 'op123')">
+                        📦 Operador (lucas.op)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Sidebar Navigation -->
     <aside class="sidebar">
         <div class="sidebar-header">
@@ -90,9 +141,20 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                 <span>Central de Dados &amp; CSV</span>
             </button>
+            <button class="nav-btn" data-tab="usuarios" id="navUsersBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span>Usuários &amp; Acessos (Master)</span>
+            </button>
         </nav>
 
         <div class="sidebar-footer">
+            <div class="logged-user-card">
+                <div class="logged-user-info">
+                    <strong id="sidebarUserName">Kelvin</strong>
+                    <span id="sidebarUserRole" class="role-mini-tag">MASTER</span>
+                </div>
+                <button type="button" class="btn-logout" id="logoutBtn" title="Sair / Trocar Usuário">Sair</button>
+            </div>
             <button class="btn btn-outline btn-sm w-full" id="printReportBtn">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
                 Emitir Relatório Executivo
@@ -858,6 +920,80 @@
                 </div>
             </div>
         </section>
+
+        <!-- TAB 9: GESTÃO DE USUÁRIOS & PERMISSÕES (EXCLUSIVO MASTER) -->
+        <section class="tab-panel" id="tab-usuarios">
+            <div class="kpi-grid-5" style="grid-template-columns: repeat(4, 1fr);">
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Total de Contas Cadastradas</span>
+                        <div class="kpi-icon blue">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="usrKpiTotal">0</h3>
+                    <div class="kpi-footer"><span class="kpi-sub">Usuários e operadores com login</span></div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Administradores Master</span>
+                        <div class="kpi-icon purple">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="usrKpiMasters">0</h3>
+                    <div class="kpi-footer"><span class="kpi-sub">Acesso total irrestrito ao ERP</span></div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Líderes &amp; Operadores Ativos</span>
+                        <div class="kpi-icon green">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="usrKpiActive">0</h3>
+                    <div class="kpi-footer"><span class="kpi-sub">Contas liberadas para acesso</span></div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Contas Bloqueadas</span>
+                        <div class="kpi-icon red">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="usrKpiBlocked">0</h3>
+                    <div class="kpi-footer"><span class="kpi-sub">Acesso suspenso pelo Master</span></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h3>Controle de Usuários, Senhas e Matriz de Permissões (RBAC)</h3>
+                        <p class="text-muted">Como Usuário Master, defina exatamente quais telas e quais ações cada operador ou líder pode acessar</p>
+                    </div>
+                    <button class="btn btn-primary" id="newUserBtn">+ Cadastrar Usuário / Operador</button>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Login</th>
+                                <th>Nome do Usuário</th>
+                                <th>Perfil / Nível</th>
+                                <th>Turno</th>
+                                <th>Módulos Liberados (Abas)</th>
+                                <th>Permissões de Ação</th>
+                                <th>Status</th>
+                                <th class="text-right">Gerenciar</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
     </main>
 
     <!-- MODAL 1: CADASTRAR / EDITAR PRODUTO -->
@@ -1168,6 +1304,91 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline" data-close="employeeModal">Cancelar</button>
                     <button type="submit" class="btn btn-primary">Salvar Colaborador no RH</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 6: CADASTRAR / EDITAR USUÁRIO E MATRIZ DE PERMISSÕES (RBAC MASTER) -->
+    <div class="modal-backdrop" id="userModal">
+        <div class="modal" style="max-width: 760px;">
+            <div class="modal-header">
+                <h3 id="userModalTitle">Cadastrar Usuário &amp; Definir Permissões de Acesso</h3>
+                <button class="modal-close" data-close="userModal">&times;</button>
+            </div>
+            <form id="userForm">
+                <input type="hidden" id="usrId">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="usrUsername">Login de Acesso *</label>
+                        <input type="text" id="usrUsername" required placeholder="Ex: rodrigo.t2">
+                    </div>
+                    <div class="form-group">
+                        <label for="usrPassword">Senha de Acesso *</label>
+                        <input type="text" id="usrPassword" required placeholder="Ex: senha123">
+                    </div>
+                    <div class="form-group">
+                        <label for="usrName">Nome Completo *</label>
+                        <input type="text" id="usrName" required placeholder="Ex: Rodrigo Silva">
+                    </div>
+                    <div class="form-group">
+                        <label for="usrRolePreset">Perfil de Acesso (Predefinição) *</label>
+                        <select id="usrRolePreset" required>
+                            <option value="OPERADOR">Operador Logístico (Estoque, Kardex, Cautelas)</option>
+                            <option value="LIDER">Líder de Turno (Operação + Passagem de Turno)</option>
+                            <option value="RH">Analista de RH (Quadro RH, Turnover, Cautelas)</option>
+                            <option value="MASTER">Usuário Master (Acesso Total Irrestrito)</option>
+                            <option value="CUSTOM">Personalizado (Escolher Manualmente Abaixo)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="usrShift">Turno Vinculado</label>
+                        <select id="usrShift">
+                            <option value="Todos">Todos os Turnos</option>
+                            <option value="T1 - Manhã">T1 - Manhã</option>
+                            <option value="T2 - Tarde">T2 - Tarde</option>
+                            <option value="T3 - Noite">T3 - Noite</option>
+                            <option value="ADM">ADM</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="usrStatus">Status da Conta *</label>
+                        <select id="usrStatus" required>
+                            <option value="ATIVO">Ativo (Login Liberado)</option>
+                            <option value="BLOQUEADO">Bloqueado (Impedir Login)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group span-3">
+                        <label>1. Módulos / Telas que este usuário pode acessar:</label>
+                        <div class="checklist-grid" style="grid-template-columns: repeat(3, 1fr);">
+                            <label class="check-item"><input type="checkbox" id="permTabDashboard" checked> Visão Macro &amp; Dashboard</label>
+                            <label class="check-item"><input type="checkbox" id="permTabRh"> Controle de RH &amp; Turnover</label>
+                            <label class="check-item"><input type="checkbox" id="permTabAnalytics"> Curva ABC &amp; CAPEX</label>
+                            <label class="check-item"><input type="checkbox" id="permTabProdutos" checked> Catálogo &amp; Posição (SKUs)</label>
+                            <label class="check-item"><input type="checkbox" id="permTabMovimentacoes" checked> Kardex / Movimentações</label>
+                            <label class="check-item"><input type="checkbox" id="permTabCautelas" checked> Gestão de Cautelas</label>
+                            <label class="check-item"><input type="checkbox" id="permTabHandover"> Passagem de Turno (S&amp;OP)</label>
+                            <label class="check-item"><input type="checkbox" id="permTabRelatorios"> Central de Dados &amp; CSV</label>
+                            <label class="check-item"><input type="checkbox" id="permTabUsuarios"> Gestão de Usuários (Master)</label>
+                        </div>
+                    </div>
+
+                    <div class="form-group span-3">
+                        <label>2. Funcionalidades e Ações que este usuário pode executar:</label>
+                        <div class="checklist-grid" style="grid-template-columns: repeat(2, 1fr);">
+                            <label class="check-item"><input type="checkbox" id="permActViewFinancials"> Visualizar Custos, Valores (R$) e Salários</label>
+                            <label class="check-item"><input type="checkbox" id="permActManageProducts"> Cadastrar, Editar e Excluir SKUs</label>
+                            <label class="check-item"><input type="checkbox" id="permActRegisterMovements" checked> Lançar Entradas e Saídas no Kardex</label>
+                            <label class="check-item"><input type="checkbox" id="permActManageLoans" checked> Emitir e Baixar Cautelas de Equipamentos</label>
+                            <label class="check-item"><input type="checkbox" id="permActAuditStock"> Executar Auditoria Rápida de Inventário</label>
+                            <label class="check-item"><input type="checkbox" id="permActManageHr"> Cadastrar/Editar Colaboradores no RH</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline" data-close="userModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Salvar Usuário &amp; Permissões</button>
                 </div>
             </form>
         </div>

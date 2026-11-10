@@ -81,12 +81,26 @@ CREATE TABLE IF NOT EXISTS public.cd_loans (
     notes TEXT
 );
 
--- 6. Habilitar Row Level Security (RLS) com acesso público para a aplicação do CD
+-- 6. Tabela Relacional de Usuários e Permissões de Acesso (RBAC / Master)
+CREATE TABLE IF NOT EXISTS public.cd_users (
+    id TEXT PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    role_label TEXT NOT NULL DEFAULT 'Operador',
+    is_master BOOLEAN NOT NULL DEFAULT FALSE,
+    shift TEXT DEFAULT 'Todos',
+    status TEXT NOT NULL DEFAULT 'ATIVO',
+    permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 7. Habilitar Row Level Security (RLS) com acesso público para a aplicação do CD
 ALTER TABLE public.cd_app_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cd_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cd_employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cd_movements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cd_loans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cd_users ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Acesso total cd_app_state" ON public.cd_app_state;
 CREATE POLICY "Acesso total cd_app_state" ON public.cd_app_state FOR ALL USING (true) WITH CHECK (true);
@@ -102,3 +116,7 @@ CREATE POLICY "Acesso total cd_movements" ON public.cd_movements FOR ALL USING (
 
 DROP POLICY IF EXISTS "Acesso total cd_loans" ON public.cd_loans;
 CREATE POLICY "Acesso total cd_loans" ON public.cd_loans FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Acesso total cd_users" ON public.cd_users;
+CREATE POLICY "Acesso total cd_users" ON public.cd_users FOR ALL USING (true) WITH CHECK (true);
+

@@ -571,6 +571,30 @@ function getInitialUsersDemo() {
     ];
 }
 
+// Garante que a lista de usuários e a conta Master (kelvin) sempre existam mesmo após sincronizar dados antigos da nuvem
+function ensureUsersIntegrity() {
+    const defaultUsers = getInitialUsersDemo();
+    if (!state || typeof state !== 'object') return;
+    if (!Array.isArray(state.users) || state.users.length === 0) {
+        state.users = defaultUsers;
+        return;
+    }
+    defaultUsers.forEach((defUser) => {
+        const exists = state.users.find(
+            (u) => u && u.username && u.username.toLowerCase() === defUser.username.toLowerCase()
+        );
+        if (!exists) {
+            state.users.push(defUser);
+        } else if (defUser.username === 'kelvin') {
+            exists.isMaster = true;
+            exists.rolePreset = 'MASTER';
+            exists.status = 'ATIVO';
+            if (!exists.password) exists.password = 'admin123';
+            exists.permissions = getRolePresetPermissions('MASTER');
+        }
+    });
+}
+
 // Persistência local com migração automática da base de RH e Usuários
 function loadState() {
     try {
@@ -595,14 +619,17 @@ function loadState() {
                         ? parsed.users
                         : demo.users
             };
+            ensureUsersIntegrity();
             saveState();
         } else {
             state = getInitialDemoData();
+            ensureUsersIntegrity();
             saveState();
         }
     } catch (err) {
         console.error('Erro ao carregar estado:', err);
         state = getInitialDemoData();
+        ensureUsersIntegrity();
     }
 }
 
@@ -745,14 +772,25 @@ async function pullStateFromSupabase(showNotification = false) {
         if (error) throw error;
 
         if (data && data.payload && Array.isArray(data.payload.products)) {
-            state = data.payload;
+            const hadUsersInCloud = Array.isArray(data.payload.users) && data.payload.users.length > 0;
+            const currentUsersBackup = state.users;
+            state = {
+                ...state,
+                ...data.payload,
+                users: hadUsersInCloud ? data.payload.users : currentUsersBackup
+            };
+            ensureUsersIntegrity();
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             renderAll();
+            if (!hadUsersInCloud) {
+                await pushStateToSupabase(false);
+            }
             if (showNotification) {
                 showToast('Dados baixados do Supabase com sucesso!', 'success');
             }
         } else {
             // Primeiro acesso na nuvem: envia o estado atual para inicializar o banco
+            ensureUsersIntegrity();
             await pushStateToSupabase(showNotification);
         }
     } catch (err) {
@@ -906,11 +944,53 @@ function getMovementTypeBadge(type) {
 // CONTROLE DE AUTENTICAÇÃO E PERMISSÕES (RBAC MASTER)
 // ============================================================================
 
-function fillQuickLogin(username, password) {
-    document.getElementById('loginUsername').value = username;
-    document.getElementById('loginPassword').value = password;
-    document.getElementById('loginErrorMsg').style.display = 'none';
+function performLogin(rawUsername, rawPassword) {
+    ensureUsersIntegrity();
+    const username = String(rawUsername || '').trim().toLowerCase();
+    const password = String(rawPassword || '').trim();
+    const errBox = document.getElementById('loginErrorMsg');
+
+    const user = (state.users || []).find(
+        (u) =>
+            u &&
+            String(u.username || '').trim().toLowerCase() === username &&
+            String(u.password || '').trim() === password
+    );
+
+    if (!user) {
+        if (errBox) {
+            errBox.textContent = 'Login ou senha inválidos. Verifique suas credenciais.';
+            errBox.style.display = 'block';
+        }
+        return false;
+    }
+
+    if (user.status === 'BLOQUEADO') {
+        if (errBox) {
+            errBox.textContent = 'Esta conta foi bloqueada pelo Usuário Master.';
+            errBox.style.display = 'block';
+        }
+        return false;
+    }
+
+    if (errBox) errBox.style.display = 'none';
+    currentUser = user;
+    sessionStorage.setItem(SESSION_USER_KEY, user.username);
+    const overlay = document.getElementById('loginOverlay');
+    if (overlay) overlay.classList.add('hidden');
+    renderAll();
+    showToast(`Bem-vindo(a), ${user.name}!`, 'success');
+    return true;
 }
+
+function fillQuickLogin(username, password) {
+    const userInp = document.getElementById('loginUsername');
+    const passInp = document.getElementById('loginPassword');
+    if (userInp) userInp.value = username;
+    if (passInp) passInp.value = password;
+    performLogin(username, password);
+}
+window.fillQuickLogin = fillQuickLogin;
 
 function hasTabPermission(tabId) {
     if (!currentUser) return false;
@@ -2507,32 +2587,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Autenticação de Login e Senha
     document.getElementById('loginForm').addEventListener('submit', (e) => {
         e.preventDefault();
-        const username = document.getElementById('loginUsername').value.trim().toLowerCase();
+        const username = document.getElementById('loginUsername').value;
         const password = document.getElementById('loginPassword').value;
-        const errBox = document.getElementById('loginErrorMsg');
-
-        const user = (state.users || []).find(
-            (u) => u.username.toLowerCase() === username && u.password === password
-        );
-
-        if (!user) {
-            errBox.textContent = 'Login ou senha inválidos. Verifique suas credenciais.';
-            errBox.style.display = 'block';
-            return;
-        }
-
-        if (user.status === 'BLOQUEADO') {
-            errBox.textContent = 'Esta conta foi bloqueada pelo Usuário Master.';
-            errBox.style.display = 'block';
-            return;
-        }
-
-        errBox.style.display = 'none';
-        currentUser = user;
-        sessionStorage.setItem(SESSION_USER_KEY, user.username);
-        document.getElementById('loginOverlay').classList.add('hidden');
-        renderAll();
-        showToast(`Bem-vindo(a), ${user.name}!`, 'success');
+        performLogin(username, password);
     });
 
     // Logout / Trocar Usuário

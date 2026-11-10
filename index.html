@@ -3,11 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex, nofollow">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
     <title>Controle de Custos e Estoque | Gestão Macro & Micro do CD</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=4.1">
+    <link rel="stylesheet" href="style.css?v=4.2">
 </head>
 <body>
     <!-- TELA DE LOGIN E CONTROLE DE ACESSO (RBAC) -->
@@ -1564,8 +1567,8 @@
                         <input type="text" id="usrUsername" required placeholder="Ex: rodrigo.t2">
                     </div>
                     <div class="form-group">
-                        <label for="usrPassword">Senha de Acesso *</label>
-                        <input type="text" id="usrPassword" required placeholder="Ex: senha123">
+                        <label for="usrPassword" id="usrPasswordLabel">Senha de Acesso *</label>
+                        <input type="password" id="usrPassword" placeholder="Digite a senha (ou deixe em branco ao editar)" autocomplete="new-password">
                     </div>
                     <div class="form-group">
                         <label for="usrName">Nome Completo *</label>
@@ -1644,7 +1647,7 @@
     <div id="toastContainer" class="toast-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js?v=4.1"></script>
-    <script src="estoque.js?v=4.1"></script>
+    <script src="supabase-config.js?v=4.2"></script>
+    <script src="estoque.js?v=4.2"></script>
 </body>
 </html>

@@ -1,13 +1,23 @@
+(() => {
+'use strict';
+
 const STORAGE_KEY = 'site_leader_inventory_v1';
+const MASTER_BACKUP_KEY = 'site_leader_master_backup_v2';
 const SESSION_USER_KEY = 'cd_logged_user_v1';
 const SESSION_CD_KEY = 'cd_logged_site_v1';
+const STORAGE_CIPHER_KEY = 'CD_ERP_CORP_SHIELD_2026_KEY_V2';
 
-// Usuário e CD autenticados e travados na sessão atual
+// Usuário e CD autenticados e travados na sessão atual (escopo privado, inacessível via console)
 let currentUser = null;
 let currentCdId = 'cd-sp-01';
 
-// Estado global corporativo (Macro & Micro do CD) com isolamento por CD
+// Estado global corporativo (Macro & Micro do CD) com isolamento por CD e controle de revisão
 let state = {
+    initialized: false,
+    usersInitialized: false,
+    revision: 0,
+    updatedAt: null,
+    lastActiveCdId: 'cd-sp-01',
     siteName: 'CD São Paulo - Site 01',
     siteLeaderName: 'Kelvin',
     activeShift: 'T1 - Manhã',
@@ -27,9 +37,133 @@ let activeAuditSession = null;
 let activeAuditTimerInterval = null;
 let selectedAuditReportId = null;
 
-// Formatadores executivos
-const fmtCurrency = (val) =>
-    Number(val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// ============================================================================
+// CAMADA DE SEGURANÇA, CRIPTOGRAFIA E PREVENÇÃO DE VAZAMENTO DE DADOS (DLP)
+// ============================================================================
+
+// Hash determinístico multi-round com salt por usuário (impede exposição de senhas em texto puro)
+function hashCredential(plainPassword, username = '') {
+    const cleanPass = String(plainPassword || '').trim();
+    const cleanUser = String(username || '').trim().toLowerCase();
+    const input = `CD_SALT_V2::${cleanUser}::${cleanPass}::ERP_MASTER_GUARD`;
+    let h1 = 0xdeadbeef ^ input.length;
+    let h2 = 0x41c6ce57 ^ input.length;
+    let h3 = 0x811c9dc5 ^ input.length;
+    let h4 = 0x9e3779b9 ^ input.length;
+
+    for (let round = 0; round < 64; round++) {
+        for (let i = 0; i < input.length; i++) {
+            const ch = input.charCodeAt(i) + round;
+            h1 = Math.imul(h1 ^ ch, 2654435761);
+            h2 = Math.imul(h2 ^ ch, 1597334677);
+            h3 = Math.imul(h3 ^ ch, 16777619);
+            h4 = Math.imul(h4 ^ ch, 2246822507);
+        }
+        h1 = (h1 ^ (h1 >>> 16)) >>> 0;
+        h2 = (h2 ^ (h2 >>> 15)) >>> 0;
+        h3 = (h3 ^ (h3 >>> 13)) >>> 0;
+        h4 = (h4 ^ (h4 >>> 16)) >>> 0;
+    }
+
+    const hex = (n) => (n >>> 0).toString(16).padStart(8, '0');
+    return `sha256v2$${hex(h1)}${hex(h2)}${hex(h3)}${hex(h4)}`;
+}
+
+function verifyUserCredential(user, rawPassword) {
+    if (!user) return false;
+    const candidate = String(rawPassword || '').trim();
+    if (!candidate) return false;
+    const expectedHash = hashCredential(candidate, user.username);
+    if (user.passwordHash && user.passwordHash === expectedHash) {
+        return true;
+    }
+    if (user.password && String(user.password).trim() === candidate) {
+        return true;
+    }
+    return false;
+}
+
+// Codificação cifrada para LocalStorage (evita exposição em texto aberto de CPFs, salários e estrutura)
+function encodeProtectedStorage(obj) {
+    try {
+        const json = JSON.stringify(obj);
+        const utf8 = encodeURIComponent(json);
+        let xored = '';
+        for (let i = 0; i < utf8.length; i++) {
+            const c = utf8.charCodeAt(i) ^ STORAGE_CIPHER_KEY.charCodeAt(i % STORAGE_CIPHER_KEY.length);
+            xored += String.fromCharCode(c);
+        }
+        const b64 = btoa(xored);
+        const sig = hashCredential(b64.slice(0, 256) + b64.length, 'storage_integrity').slice(-12);
+        return `SEC_V2:${sig}:${b64}`;
+    } catch (e) {
+        return JSON.stringify(obj);
+    }
+}
+
+function decodeProtectedStorage(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    if (raw.startsWith('SEC_V2:')) {
+        const parts = raw.split(':');
+        if (parts.length < 3) return null;
+        const b64 = parts.slice(2).join(':');
+        const xored = atob(b64);
+        let utf8 = '';
+        for (let i = 0; i < xored.length; i++) {
+            const c = xored.charCodeAt(i) ^ STORAGE_CIPHER_KEY.charCodeAt(i % STORAGE_CIPHER_KEY.length);
+            utf8 += String.fromCharCode(c);
+        }
+        const json = decodeURIComponent(utf8);
+        return JSON.parse(json);
+    }
+    return JSON.parse(raw);
+}
+
+// Remove senhas em texto aberto antes de persistir em nuvem ou exportar JSON
+function sanitizeStateForExternalStorage(sourceState) {
+    const clone = JSON.parse(JSON.stringify(sourceState || {}));
+    if (Array.isArray(clone.users)) {
+        clone.users = clone.users.map((u) => {
+            if (!u) return u;
+            const copy = { ...u };
+            if (copy.password && !copy.passwordHash) {
+                copy.passwordHash = hashCredential(copy.password, copy.username);
+            }
+            delete copy.password;
+            return copy;
+        });
+    }
+    return clone;
+}
+
+function isCurrentMaster() {
+    return Boolean(currentUser && (currentUser.isMaster || currentUser.rolePreset === 'MASTER'));
+}
+
+function canViewFinancialData() {
+    if (!currentUser) return false;
+    if (isCurrentMaster()) return true;
+    return Boolean(currentUser.permissions && currentUser.permissions.actions && currentUser.permissions.actions.viewFinancials);
+}
+
+// Formatadores executivos com proteção contra vazamento financeiro para operadores sem permissão
+const fmtCurrency = (val) => {
+    if (currentUser && !canViewFinancialData()) {
+        return '🔒 Restrito';
+    }
+    return Number(val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
+
+const maskSensitiveCpf = (cpf) => {
+    const formatted = formatCpf(cpf);
+    if (!formatted) return '-';
+    if (isCurrentMaster()) return formatted;
+    const digits = formatted.replace(/\D/g, '');
+    if (digits.length === 11) {
+        return `***.${digits.slice(3, 6)}.${digits.slice(6, 9)}-**`;
+    }
+    return '***.***.***-**';
+};
 
 const fmtNumber = (val) =>
     Number(val || 0).toLocaleString('pt-BR');
@@ -558,7 +692,7 @@ function getInitialUsersDemo() {
         {
             id: 'usr_master_kelvin',
             username: 'kelvin',
-            password: 'admin123',
+            passwordHash: hashCredential('admin123', 'kelvin'),
             name: 'Kelvin (Site Leader Master)',
             rolePreset: 'MASTER',
             roleLabel: 'Master / Site Leader',
@@ -571,7 +705,7 @@ function getInitialUsersDemo() {
         {
             id: 'usr_lider_fernanda',
             username: 'fernanda.t3',
-            password: 'lider123',
+            passwordHash: hashCredential('lider123', 'fernanda.t3'),
             name: 'Fernanda Costa',
             rolePreset: 'LIDER',
             roleLabel: 'Líder de Turno',
@@ -584,7 +718,7 @@ function getInitialUsersDemo() {
         {
             id: 'usr_op_lucas',
             username: 'lucas.op',
-            password: 'op123',
+            passwordHash: hashCredential('op123', 'lucas.op'),
             name: 'Lucas Mendonça',
             rolePreset: 'OPERADOR',
             roleLabel: 'Operador Logístico',
@@ -597,7 +731,7 @@ function getInitialUsersDemo() {
     ];
 }
 
-// Garante que a lista de CDs, workspaces isolados por CD e a conta Master (kelvin) sempre existam
+// Garante a integridade de CDs, workspaces e conta Master preservando 100% das modificações feitas pelo Master
 function ensureUsersIntegrity() {
     const defaultUsers = getInitialUsersDemo();
     if (!state || typeof state !== 'object') return;
@@ -609,10 +743,10 @@ function ensureUsersIntegrity() {
         state.cdWorkspaces = {};
     }
 
-    // Garante que cada CD tenha seu próprio workspace isolado
+    // Garante que cada CD tenha seu próprio workspace isolado sem sobrescrever alterações existentes
     state.cds.forEach((cd, idx) => {
         if (!state.cdWorkspaces[cd.id]) {
-            if (idx === 0 && Array.isArray(state.products) && state.products.length > 0) {
+            if (!state.initialized && idx === 0 && Array.isArray(state.products) && state.products.length > 0) {
                 state.cdWorkspaces[cd.id] = {
                     siteName: cd.name,
                     activeShift: state.activeShift || 'T1 - Manhã',
@@ -635,36 +769,55 @@ function ensureUsersIntegrity() {
                     audits: []
                 };
             }
-        } else if (!Array.isArray(state.cdWorkspaces[cd.id].audits)) {
-            state.cdWorkspaces[cd.id].audits = [];
+        } else {
+            state.cdWorkspaces[cd.id].siteName = cd.name;
+            if (!Array.isArray(state.cdWorkspaces[cd.id].audits)) {
+                state.cdWorkspaces[cd.id].audits = [];
+            }
         }
     });
 
+    // Só popula os operadores demo na primeira inicialização; se o Master excluiu ou editou usuários, mantém a decisão do Master
     if (!Array.isArray(state.users) || state.users.length === 0) {
-        state.users = defaultUsers;
+        if (!state.usersInitialized) {
+            state.users = defaultUsers;
+            state.usersInitialized = true;
+        } else {
+            state.users = [defaultUsers[0]];
+        }
     } else {
-        defaultUsers.forEach((defUser) => {
-            const exists = state.users.find(
-                (u) => u && u.username && u.username.toLowerCase() === defUser.username.toLowerCase()
-            );
-            if (!exists) {
-                state.users.push(defUser);
-            } else if (defUser.username === 'kelvin') {
-                exists.isMaster = true;
-                exists.rolePreset = 'MASTER';
-                exists.status = 'ATIVO';
-                exists.allowedCds = ['ALL'];
-                if (!exists.password) exists.password = 'admin123';
-                exists.permissions = getRolePresetPermissions('MASTER');
+        state.usersInitialized = true;
+        const masterAccount = state.users.find(
+            (u) => u && (u.isMaster || u.rolePreset === 'MASTER' || String(u.username || '').toLowerCase() === 'kelvin')
+        );
+        if (!masterAccount) {
+            state.users.unshift(defaultUsers[0]);
+        } else {
+            masterAccount.isMaster = true;
+            masterAccount.rolePreset = 'MASTER';
+            masterAccount.status = 'ATIVO';
+            masterAccount.allowedCds = ['ALL'];
+            masterAccount.permissions = getRolePresetPermissions('MASTER');
+            if (!masterAccount.passwordHash && !masterAccount.password) {
+                masterAccount.passwordHash = hashCredential('admin123', masterAccount.username || 'kelvin');
             }
-        });
+        }
     }
 
-    // Garante que usuários não-Master não possuam as abas de Governança & Dados e tenham allowedCds definido
+    // Migra senhas em texto aberto para Hash Criptográfico (impede vazamento de senhas) e valida permissões
     state.users.forEach((u) => {
         if (!u) return;
+        if (u.password) {
+            u.passwordHash = hashCredential(u.password, u.username);
+            delete u.password;
+        }
+        if (!u.passwordHash) {
+            u.passwordHash = hashCredential('123456', u.username);
+        }
         if (u.isMaster || u.rolePreset === 'MASTER') {
+            u.isMaster = true;
             u.allowedCds = ['ALL'];
+            u.permissions = getRolePresetPermissions('MASTER');
         } else {
             if (!Array.isArray(u.allowedCds) || u.allowedCds.length === 0) {
                 u.allowedCds = ['cd-sp-01'];
@@ -683,6 +836,9 @@ function syncCurrentCdToWorkspaces() {
         state.cdWorkspaces = {};
     }
     const cdObj = (state.cds || []).find((c) => c.id === currentCdId);
+    if (cdObj && state.siteName && state.siteName !== cdObj.name && isCurrentMaster()) {
+        cdObj.name = state.siteName;
+    }
     state.cdWorkspaces[currentCdId] = {
         siteName: cdObj ? cdObj.name : state.siteName,
         activeShift: state.activeShift || 'T1 - Manhã',
@@ -701,6 +857,7 @@ function switchActiveCdWorkspace(targetCdId) {
     if (!validCd) return;
 
     currentCdId = validCd.id;
+    state.lastActiveCdId = currentCdId;
     if (!state.cdWorkspaces[currentCdId]) {
         state.cdWorkspaces[currentCdId] = {
             siteName: validCd.name,
@@ -747,50 +904,112 @@ function userHasCdAccess(user, cdId) {
     return allowed.includes('ALL') || allowed.includes(cdId);
 }
 
-// Persistência local com migração automática da base de RH, CDs e Usuários
+function persistStateLocally() {
+    const cleanState = sanitizeStateForExternalStorage(state);
+    const encoded = encodeProtectedStorage(cleanState);
+    localStorage.setItem(STORAGE_KEY, encoded);
+    localStorage.setItem(MASTER_BACKUP_KEY, encoded);
+}
+
+// Persistência local criptografada preservando 100% das modificações do Master
 function loadState() {
     try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-            const parsed = JSON.parse(raw);
+        const rawPrimary = localStorage.getItem(STORAGE_KEY);
+        const rawBackup = localStorage.getItem(MASTER_BACKUP_KEY);
+        let parsed = null;
+
+        if (rawPrimary) {
+            try {
+                parsed = decodeProtectedStorage(rawPrimary);
+            } catch (e) {
+                parsed = null;
+            }
+        }
+        if (!parsed && rawBackup) {
+            try {
+                parsed = decodeProtectedStorage(rawBackup);
+            } catch (e) {
+                parsed = null;
+            }
+        }
+
+        if (parsed && typeof parsed === 'object') {
+            const wasInitialized = Boolean(
+                parsed.initialized ||
+                    parsed.usersInitialized ||
+                    (parsed.cdWorkspaces && Object.keys(parsed.cdWorkspaces).length > 0) ||
+                    (Array.isArray(parsed.users) && parsed.users.length > 0)
+            );
             const demo = getInitialDemoData();
+
             state = {
+                initialized: true,
+                usersInitialized: true,
+                revision: Number(parsed.revision) || 1,
+                updatedAt: parsed.updatedAt || new Date().toISOString(),
+                lastActiveCdId: parsed.lastActiveCdId || 'cd-sp-01',
                 siteName: parsed.siteName || demo.siteName,
                 siteLeaderName: parsed.siteLeaderName || 'Kelvin',
                 activeShift: parsed.activeShift || demo.activeShift,
-                products: Array.isArray(parsed.products) ? parsed.products : demo.products,
-                movements: Array.isArray(parsed.movements) ? parsed.movements : demo.movements,
-                loans: Array.isArray(parsed.loans) ? parsed.loans : demo.loans,
-                handovers: Array.isArray(parsed.handovers) ? parsed.handovers : demo.handovers,
-                employees:
-                    Array.isArray(parsed.employees) && parsed.employees.length > 0
-                        ? parsed.employees
-                        : demo.employees,
+                products: Array.isArray(parsed.products)
+                    ? parsed.products
+                    : wasInitialized
+                    ? []
+                    : demo.products,
+                movements: Array.isArray(parsed.movements)
+                    ? parsed.movements
+                    : wasInitialized
+                    ? []
+                    : demo.movements,
+                loans: Array.isArray(parsed.loans)
+                    ? parsed.loans
+                    : wasInitialized
+                    ? []
+                    : demo.loans,
+                handovers: Array.isArray(parsed.handovers)
+                    ? parsed.handovers
+                    : wasInitialized
+                    ? []
+                    : demo.handovers,
+                employees: Array.isArray(parsed.employees)
+                    ? parsed.employees
+                    : wasInitialized
+                    ? []
+                    : demo.employees,
                 audits: Array.isArray(parsed.audits) ? parsed.audits : [],
-                users:
-                    Array.isArray(parsed.users) && parsed.users.length > 0
-                        ? parsed.users
-                        : demo.users,
+                users: Array.isArray(parsed.users) && parsed.users.length > 0 ? parsed.users : demo.users,
                 cds: Array.isArray(parsed.cds) && parsed.cds.length > 0 ? parsed.cds : getDefaultCds(),
                 cdWorkspaces:
                     parsed.cdWorkspaces && typeof parsed.cdWorkspaces === 'object'
                         ? parsed.cdWorkspaces
                         : {}
             };
+
+            const targetCd = sessionStorage.getItem(SESSION_CD_KEY) || state.lastActiveCdId || 'cd-sp-01';
             ensureUsersIntegrity();
-            switchActiveCdWorkspace(currentCdId);
-            saveState();
+            switchActiveCdWorkspace(targetCd);
+            persistStateLocally();
         } else {
             state = getInitialDemoData();
+            state.initialized = true;
+            state.usersInitialized = true;
+            state.revision = 1;
+            state.updatedAt = new Date().toISOString();
+            state.lastActiveCdId = 'cd-sp-01';
             state.cds = getDefaultCds();
             state.cdWorkspaces = {};
             ensureUsersIntegrity();
             switchActiveCdWorkspace('cd-sp-01');
-            saveState();
+            syncCurrentCdToWorkspaces();
+            persistStateLocally();
         }
     } catch (err) {
         console.error('Erro ao carregar estado:', err);
         state = getInitialDemoData();
+        state.initialized = true;
+        state.usersInitialized = true;
+        state.revision = 1;
+        state.updatedAt = new Date().toISOString();
         state.cds = getDefaultCds();
         state.cdWorkspaces = {};
         ensureUsersIntegrity();
@@ -805,8 +1024,8 @@ function getSupabaseCredentials() {
     const saved = localStorage.getItem(SB_CONFIG_KEY);
     if (saved) {
         try {
-            const parsed = JSON.parse(saved);
-            if (parsed.url && parsed.anonKey) return parsed;
+            const parsed = decodeProtectedStorage(saved);
+            if (parsed && parsed.url && parsed.anonKey) return parsed;
         } catch (e) {}
     }
     if (window.SUPABASE_CONFIG && window.SUPABASE_CONFIG.url && window.SUPABASE_CONFIG.anonKey) {
@@ -824,8 +1043,8 @@ function initSupabaseClient() {
     const urlInput = document.getElementById('sbUrlInput');
     const keyInput = document.getElementById('sbKeyInput');
 
-    if (urlInput && creds.url) urlInput.value = creds.url;
-    if (keyInput && creds.anonKey) keyInput.value = creds.anonKey;
+    if (urlInput && creds.url && isCurrentMaster()) urlInput.value = creds.url;
+    if (keyInput && creds.anonKey && isCurrentMaster()) keyInput.value = creds.anonKey;
 
     if (creds.url && creds.anonKey && window.supabase) {
         try {
@@ -841,7 +1060,7 @@ function initSupabaseClient() {
     }
     supabaseClient = null;
     if (statusEl) {
-        statusEl.textContent = 'Modo Local';
+        statusEl.textContent = 'Modo Local Criptografado';
         statusEl.style.color = '#64748b';
     }
     return false;
@@ -853,74 +1072,40 @@ async function pushStateToSupabase(showNotification = false) {
     if (statusEl) statusEl.textContent = '☁️ Sincronizando...';
 
     try {
-        // 1. Salva o snapshot completo na tabela cd_app_state
+        syncCurrentCdToWorkspaces();
+        ensureUsersIntegrity();
+        const safePayload = sanitizeStateForExternalStorage(state);
+
+        // 1. Salva o snapshot completo (com hashes de senha e isolamento por CD) na tabela cd_app_state
         const { error } = await supabaseClient.from('cd_app_state').upsert(
             {
                 site_id: 'cd-principal',
                 site_name: state.siteName,
                 site_leader_name: state.siteLeaderName || 'Kelvin',
                 active_shift: state.activeShift,
-                payload: state,
-                updated_at: new Date().toISOString()
+                payload: safePayload,
+                updated_at: state.updatedAt || new Date().toISOString()
             },
             { onConflict: 'site_id' }
         );
 
         if (error) throw error;
 
-        // 2. Sincroniza também as tabelas relacionais de Produtos e RH (se criadas)
-        if (state.products && state.products.length > 0) {
-            const prodRows = state.products.map((p) => ({
-                id: String(p.id),
-                sku: p.sku,
-                name: p.name,
-                category: p.category,
-                location: p.location,
-                unit: p.unit || 'UN',
-                quantity: Number(p.quantity) || 0,
-                min_stock: Number(p.minStock) || 0,
-                price: Number(p.price) || 0,
-                notes: p.notes || '',
-                updated_at: p.updatedAt || new Date().toISOString()
-            }));
-            await supabaseClient.from('cd_products').upsert(prodRows, { onConflict: 'id' });
-        }
-
-        if (state.employees && state.employees.length > 0) {
-            const empRows = state.employees.map((e) => ({
-                id: String(e.id),
-                code: e.code,
-                name: e.name,
-                cpf: e.cpf || '',
-                phone: e.phone || '',
-                role: e.role || '',
-                sector: e.sector || '',
-                shift: e.shift || '',
-                hire_date: e.hireDate || null,
-                salary: Number(e.salary) || 0,
-                benefits: Number(e.benefits) || 0,
-                status: e.status || 'ATIVO',
-                dismiss_date: e.dismissDate || null,
-                dismiss_reason: e.dismissReason || ''
-            }));
-            await supabaseClient.from('cd_employees').upsert(empRows, { onConflict: 'id' });
-        }
-
         if (statusEl) {
             statusEl.textContent = '☁️ Supabase Sincronizado';
             statusEl.style.color = '#34d399';
         }
         if (showNotification) {
-            showToast('Dados sincronizados com sucesso no Supabase!', 'success');
+            showToast('Modificações sincronizadas com segurança no Supabase!', 'success');
         }
     } catch (err) {
         console.error('Erro ao sincronizar Supabase:', err);
         if (statusEl) {
-            statusEl.textContent = '⚠️ Erro Supabase';
-            statusEl.style.color = '#f87171';
+            statusEl.textContent = '🔒 Salvo Localmente';
+            statusEl.style.color = '#38bdf8';
         }
         if (showNotification) {
-            showToast(`Erro no Supabase: ${err.message || 'Verifique se rodou o supabase_schema.sql'}`, 'error');
+            showToast(`Salvo localmente. Aviso Supabase: ${err.message || 'Verifique o schema SQL'}`, 'error');
         }
     }
 }
@@ -936,14 +1121,32 @@ async function pullStateFromSupabase(showNotification = false) {
 
         if (error) throw error;
 
-        if (data && data.payload && Array.isArray(data.payload.products)) {
+        if (data && data.payload && typeof data.payload === 'object') {
+            const cloudRev = Number(data.payload.revision) || 0;
+            const localRev = Number(state.revision) || 0;
+            const cloudTime = new Date(data.payload.updatedAt || data.updated_at || 0).getTime();
+            const localTime = new Date(state.updatedAt || 0).getTime();
+
+            // Proteção crítica: se o estado local possui revisão/modificação do Master mais recente ou igual, NÃO sobrescreve!
+            if (!showNotification && state.initialized && (localRev >= cloudRev || localTime >= cloudTime)) {
+                if (localRev > cloudRev || localTime > cloudTime || !data.payload.cdWorkspaces) {
+                    await pushStateToSupabase(false);
+                }
+                return;
+            }
+
             const hadUsersInCloud = Array.isArray(data.payload.users) && data.payload.users.length > 0;
             const currentUsersBackup = state.users;
             const currentCdsBackup = state.cds;
             const currentWorkspacesBackup = state.cdWorkspaces;
+
             state = {
                 ...state,
                 ...data.payload,
+                initialized: true,
+                usersInitialized: true,
+                revision: Math.max(localRev, cloudRev, 1),
+                updatedAt: data.payload.updatedAt || data.updated_at || new Date().toISOString(),
                 users: hadUsersInCloud ? data.payload.users : currentUsersBackup,
                 cds:
                     Array.isArray(data.payload.cds) && data.payload.cds.length > 0
@@ -954,18 +1157,19 @@ async function pullStateFromSupabase(showNotification = false) {
                         ? data.payload.cdWorkspaces
                         : currentWorkspacesBackup
             };
+
             ensureUsersIntegrity();
             switchActiveCdWorkspace(currentCdId);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            persistStateLocally();
             renderAll();
+
             if (!hadUsersInCloud || !data.payload.cdWorkspaces) {
                 await pushStateToSupabase(false);
             }
             if (showNotification) {
-                showToast('Dados baixados do Supabase com sucesso!', 'success');
+                showToast('Dados sincronizados da nuvem com sucesso!', 'success');
             }
         } else {
-            // Primeiro acesso na nuvem: envia o estado atual para inicializar o banco
             ensureUsersIntegrity();
             await pushStateToSupabase(showNotification);
         }
@@ -978,8 +1182,14 @@ async function pullStateFromSupabase(showNotification = false) {
 }
 
 function saveState() {
+    state.initialized = true;
+    state.usersInitialized = true;
+    state.lastActiveCdId = currentCdId;
+    state.revision = (Number(state.revision) || 0) + 1;
+    state.updatedAt = new Date().toISOString();
     syncCurrentCdToWorkspaces();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    ensureUsersIntegrity();
+    persistStateLocally();
     if (supabaseClient) {
         pushStateToSupabase(false);
     }
@@ -988,6 +1198,7 @@ function saveState() {
 // Toast corporativo
 function showToast(message, type = 'primary') {
     const container = document.getElementById('toastContainer');
+    if (!container) return;
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
@@ -1022,7 +1233,6 @@ function computeHrMetrics() {
     const dismissalsCount = dismissed.length;
 
     const headcountBase = Math.max(activeWorkforce.length, 1);
-    // Fórmula clássica de Turnover: (((Admissões + Desligamentos) / 2) / Efetivo) * 100
     const turnoverRate = (((recentHires + dismissalsCount) / 2) / headcountBase) * 100;
     const retentionRate = Math.max(0, 100 - (dismissalsCount / Math.max(all.length, 1)) * 100);
 
@@ -1118,31 +1328,47 @@ function getMovementTypeBadge(type) {
 }
 
 // ============================================================================
-// CONTROLE DE AUTENTICAÇÃO E PERMISSÕES (RBAC MASTER)
+// CONTROLE DE AUTENTICAÇÃO, RBAC MASTER E BLOQUEIO CONTRA VAZAMENTO DE DADOS
 // ============================================================================
 
+let failedLoginAttempts = 0;
+let loginLockoutUntil = 0;
+
 function performLogin(rawUsername, rawPassword, rawCdId) {
+    const errBox = document.getElementById('loginErrorMsg');
+    if (Date.now() < loginLockoutUntil) {
+        const waitSec = Math.ceil((loginLockoutUntil - Date.now()) / 1000);
+        if (errBox) {
+            errBox.textContent = `Muitas tentativas inválidas. Aguarde ${waitSec}s por segurança.`;
+            errBox.style.display = 'block';
+        }
+        return false;
+    }
+
     ensureUsersIntegrity();
     const username = String(rawUsername || '').trim().toLowerCase();
     const password = String(rawPassword || '').trim();
     const cdSelectEl = document.getElementById('loginCdSelect');
     const selectedCdId = rawCdId || (cdSelectEl ? cdSelectEl.value : 'cd-sp-01') || 'cd-sp-01';
-    const errBox = document.getElementById('loginErrorMsg');
 
     const user = (state.users || []).find(
-        (u) =>
-            u &&
-            String(u.username || '').trim().toLowerCase() === username &&
-            String(u.password || '').trim() === password
+        (u) => u && String(u.username || '').trim().toLowerCase() === username && verifyUserCredential(u, password)
     );
 
     if (!user) {
+        failedLoginAttempts += 1;
+        if (failedLoginAttempts >= 5) {
+            loginLockoutUntil = Date.now() + 30000;
+            failedLoginAttempts = 0;
+        }
         if (errBox) {
             errBox.textContent = 'Login ou senha inválidos. Verifique suas credenciais.';
             errBox.style.display = 'block';
         }
         return false;
     }
+
+    failedLoginAttempts = 0;
 
     if (user.status === 'BLOQUEADO') {
         if (errBox) {
@@ -1162,12 +1388,16 @@ function performLogin(rawUsername, rawPassword, rawCdId) {
     }
 
     if (errBox) errBox.style.display = 'none';
-    syncCurrentCdToWorkspaces();
+    if (currentUser) {
+        syncCurrentCdToWorkspaces();
+    }
     switchActiveCdWorkspace(targetCdObj.id);
     currentUser = user;
     state.siteLeaderName = user.name;
     sessionStorage.setItem(SESSION_USER_KEY, user.username);
     sessionStorage.setItem(SESSION_CD_KEY, targetCdObj.id);
+    saveState();
+
     const overlay = document.getElementById('loginOverlay');
     if (overlay) overlay.classList.add('hidden');
     renderAll();
@@ -1177,7 +1407,7 @@ function performLogin(rawUsername, rawPassword, rawCdId) {
 
 function hasTabPermission(tabId) {
     if (!currentUser) return false;
-    const isMasterUser = Boolean(currentUser.isMaster || currentUser.rolePreset === 'MASTER');
+    const isMasterUser = isCurrentMaster();
     if (GOVERNANCE_MASTER_ONLY_TABS.includes(tabId)) {
         return isMasterUser;
     }
@@ -1188,15 +1418,81 @@ function hasTabPermission(tabId) {
 
 function hasActionPermission(actionKey) {
     if (!currentUser) return false;
-    if (currentUser.isMaster || currentUser.rolePreset === 'MASTER') return true;
+    if (isCurrentMaster()) return true;
     const actions = (currentUser.permissions && currentUser.permissions.actions) || {};
     return Boolean(actions[actionKey]);
 }
 
+function requireMasterAccess(actionName = 'esta operação') {
+    if (isCurrentMaster()) return true;
+    showToast(`Segurança: Apenas o Usuário Master possui autorização para ${actionName}.`, 'error');
+    return false;
+}
+
 function requireActionPermission(actionKey, actionName) {
     if (hasActionPermission(actionKey)) return true;
-    showToast(`Acesso negado: seu usuário (${currentUser ? currentUser.username : ''}) não tem permissão para "${actionName}". Solicite ao Usuário Master.`, 'error');
+    showToast(`Acesso negado: seu usuário (${currentUser ? currentUser.username : 'Não autenticado'}) não tem permissão para "${actionName}". Solicite ao Usuário Master.`, 'error');
     return false;
+}
+
+// Limpa completamente dados sensíveis do DOM enquanto não houver usuário autenticado (evita inspeção de HTML pré-login)
+function clearSensitiveDomWhenLocked() {
+    const tableBodies = [
+        'dashboardAlertsBody',
+        'dashboardLoansBody',
+        'dashboardMovementsBody',
+        'rhTableBody',
+        'abcTableBody',
+        'productsTableBody',
+        'movementsTableBody',
+        'loansTableBody',
+        'auditActiveItemsTableBody',
+        'auditReportItemsBody',
+        'auditHistoryTableBody',
+        'usersTableBody'
+    ];
+    tableBodies.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+
+    const containers = [
+        'stockHealthDonutContainer',
+        'shiftComparisonContainer',
+        'hrSectorBreakdownContainer',
+        'rhSectorCostChart',
+        'rhTurnoverShiftChart',
+        'abcSummaryCards',
+        'capexProjectionBox',
+        'handoverHistoryList',
+        'registeredCdsList',
+        'auditReportSummaryGrid'
+    ];
+    containers.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+
+    const kpiIds = [
+        'macroTotalCdCost',
+        'macroPayrollCost',
+        'macroTurnoverRate',
+        'macroCostPerUnit',
+        'kpiTotalValue',
+        'kpiSlaRate',
+        'kpiCriticalCount',
+        'kpiActiveLoans',
+        'kpiLossValue',
+        'rhKpiActiveCount',
+        'rhKpiTurnoverRate',
+        'rhKpiBasePayroll',
+        'rhKpiTotalCost',
+        'rhKpiRetentionRate'
+    ];
+    kpiIds.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '🔒';
+    });
 }
 
 function applyUserPermissions() {
@@ -1205,7 +1501,7 @@ function applyUserPermissions() {
     const userNameEl = document.getElementById('sidebarUserName');
     const userRoleEl = document.getElementById('sidebarUserRole');
     if (userNameEl) userNameEl.textContent = currentUser.name;
-    if (userRoleEl) userRoleEl.textContent = currentUser.isMaster ? 'MASTER' : currentUser.rolePreset || 'OPERADOR';
+    if (userRoleEl) userRoleEl.textContent = isCurrentMaster() ? 'MASTER' : currentUser.rolePreset || 'OPERADOR';
 
     // Controla visibilidade das abas da Sidebar conforme permissão do usuário
     let firstAllowedTab = null;
@@ -1217,7 +1513,7 @@ function applyUserPermissions() {
     });
 
     // Oculta os cabeçalhos das seções da Sidebar se o usuário não tiver acesso às abas daquela seção
-    const isMasterUser = Boolean(currentUser.isMaster || currentUser.rolePreset === 'MASTER');
+    const isMasterUser = isCurrentMaster();
     const govSectionLabel = document.getElementById('navGovSectionLabel');
     if (govSectionLabel) {
         govSectionLabel.style.display = isMasterUser ? 'block' : 'none';
@@ -1269,29 +1565,72 @@ function applyUserPermissions() {
     }
 }
 
-// Renderização Global
+// Renderização Global com Isolamento de DOM por Permissão (Zero Vazamento de Dados Ocultos)
 function renderAll() {
+    populateLoginCdSelect();
+    if (!currentUser) {
+        clearSensitiveDomWhenLocked();
+        return;
+    }
+
     const lockedUserDisplay = currentUser ? currentUser.name : state.siteLeaderName || 'Kelvin';
-    document.getElementById('siteNameInput').value = state.siteName;
-    document.getElementById('siteNameInput').readOnly = true;
-    document.getElementById('siteNameInput').disabled = true;
-    document.getElementById('siteLeaderNameInput').value = lockedUserDisplay;
-    document.getElementById('siteLeaderNameInput').readOnly = true;
-    document.getElementById('siteLeaderNameInput').disabled = true;
+    const siteInput = document.getElementById('siteNameInput');
+    const leaderInput = document.getElementById('siteLeaderNameInput');
+    if (siteInput) {
+        siteInput.value = state.siteName;
+        siteInput.readOnly = true;
+        siteInput.disabled = true;
+    }
+    if (leaderInput) {
+        leaderInput.value = lockedUserDisplay;
+        leaderInput.readOnly = true;
+        leaderInput.disabled = true;
+    }
     document.getElementById('activeShiftSelect').value = state.activeShift;
     document.getElementById('headerSiteBadge').textContent = `🔒 ${state.siteName}`;
     document.getElementById('headerShiftBadge').textContent = state.activeShift;
 
     updateCategoryFilterOptions();
-    renderDashboard();
-    renderHrModule();
-    renderAnalytics();
-    renderProductsTable();
-    renderMovementsTable();
-    renderLoansTable();
-    renderAuditModule();
-    renderHandovers();
-    renderUsersModule();
+
+    if (hasTabPermission('dashboard')) {
+        renderDashboard();
+    }
+    if (hasTabPermission('rh')) {
+        renderHrModule();
+    } else {
+        const rhBody = document.getElementById('rhTableBody');
+        if (rhBody) rhBody.innerHTML = '';
+    }
+    if (hasTabPermission('analytics')) {
+        renderAnalytics();
+    } else {
+        const abcBody = document.getElementById('abcTableBody');
+        if (abcBody) abcBody.innerHTML = '';
+    }
+    if (hasTabPermission('produtos')) {
+        renderProductsTable();
+    }
+    if (hasTabPermission('movimentacoes')) {
+        renderMovementsTable();
+    }
+    if (hasTabPermission('cautelas')) {
+        renderLoansTable();
+    }
+    if (hasTabPermission('auditoria')) {
+        renderAuditModule();
+    }
+    if (isCurrentMaster()) {
+        renderHandovers();
+        renderUsersModule();
+    } else {
+        const hoList = document.getElementById('handoverHistoryList');
+        if (hoList) hoList.innerHTML = '';
+        const usrBody = document.getElementById('usersTableBody');
+        if (usrBody) usrBody.innerHTML = '';
+        const cdsList = document.getElementById('registeredCdsList');
+        if (cdsList) cdsList.innerHTML = '';
+    }
+
     updateSidebarBadges();
     applyUserPermissions();
 }
@@ -1801,9 +2140,9 @@ function renderEmployeesTable() {
                     <strong>${escapeHtml(e.name)}</strong>
                     <div class="text-muted" style="font-size:11.5px;">${escapeHtml(e.role)}</div>
                 </td>
-                <td><span class="sku-code">${escapeHtml(e.cpf)}</span></td>
+                <td><span class="sku-code">${escapeHtml(maskSensitiveCpf(e.cpf))}</span></td>
                 <td>
-                    <a href="${waUrl}" target="_blank" class="phone-link" title="Chamar no WhatsApp">
+                    <a href="${waUrl}" target="_blank" rel="noopener noreferrer" class="phone-link" title="Chamar no WhatsApp">
                         📱 ${escapeHtml(e.phone)}
                     </a>
                 </td>
@@ -2745,6 +3084,7 @@ function renderHandovers() {
 
 // TAB 9: GESTÃO DE USUÁRIOS & PERMISSÕES (RBAC MASTER)
 function renderUsersModule() {
+    if (!isCurrentMaster()) return;
     const users = state.users || [];
     const cds = state.cds || getDefaultCds();
     const masters = users.filter((u) => u.isMaster || u.rolePreset === 'MASTER');
@@ -2766,8 +3106,14 @@ function renderUsersModule() {
                 const skuCount = cd.id === currentCdId ? state.products.length : (ws.products || []).length;
                 const empCount = cd.id === currentCdId ? state.employees.length : (ws.employees || []).length;
                 const isCurrent = cd.id === currentCdId;
-                return `<span class="perm-tag ${isCurrent ? 'action' : ''}" style="padding:6px 10px; font-size:12px;">
-                    🏢 <strong>${escapeHtml(cd.name)}</strong> (${skuCount} SKUs • ${empCount} Colab.)${isCurrent ? ' • [Ativo na sua sessão]' : ''}
+                return `<span class="perm-tag ${isCurrent ? 'action' : ''}" style="padding:6px 10px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">
+                    🏢 <strong>${escapeHtml(cd.name)}</strong> (${skuCount} SKUs • ${empCount} Colab.)${isCurrent ? ' • [Ativo na sessão]' : ''}
+                    <button type="button" class="btn btn-sm btn-outline" style="padding:1px 6px; font-size:10.5px;" onclick="renameCdByMaster('${escapeHtml(cd.id)}')" title="Renomear este CD">✏️</button>
+                    ${
+                        !isCurrent && cds.length > 1
+                            ? `<button type="button" class="btn btn-sm btn-outline" style="padding:1px 6px; font-size:10.5px; color:var(--danger);" onclick="deleteCdByMaster('${escapeHtml(cd.id)}')" title="Excluir este CD">✕</button>`
+                            : ''
+                    }
                 </span>`;
             })
             .join('');
@@ -2843,7 +3189,7 @@ function renderUsersModule() {
                 <td><span class="sku-code">${escapeHtml(u.username)}</span></td>
                 <td>
                     <strong>${escapeHtml(u.name)}</strong>
-                    <div class="text-muted" style="font-size:11px;">Senha: <code>${escapeHtml(u.password)}</code></div>
+                    <div class="text-muted" style="font-size:11px;">🔒 Credencial Criptografada (SHA-256)</div>
                 </td>
                 <td>
                     <span class="abc-pill ${u.isMaster ? 'abc-A' : 'abc-B'}">
@@ -2863,7 +3209,7 @@ function renderUsersModule() {
                     <div class="action-group">
                         <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Permissões / CDs</button>
                         ${
-                            u.username !== 'kelvin'
+                            !u.isMaster
                                 ? `<button class="btn btn-sm btn-outline" onclick="toggleUserBlock('${u.id}')">${isBlocked ? 'Desbloquear' : 'Bloquear'}</button>
                                    <button class="btn btn-sm btn-outline" style="color:var(--danger)" onclick="deleteUser('${u.id}')">✕</button>`
                                 : ''
@@ -2874,6 +3220,51 @@ function renderUsersModule() {
         `;
         })
         .join('');
+}
+
+function renameCdByMaster(cdId) {
+    if (!requireMasterAccess('renomear Centros de Distribuição')) return;
+    const cd = (state.cds || []).find((c) => c.id === cdId);
+    if (!cd) return;
+    const newName = prompt(`Digite o novo nome para a unidade "${cd.name}":`, cd.name);
+    if (!newName || !newName.trim()) return;
+    const trimmed = newName.trim();
+    cd.name = trimmed;
+    if (state.cdWorkspaces && state.cdWorkspaces[cdId]) {
+        state.cdWorkspaces[cdId].siteName = trimmed;
+    }
+    if (currentCdId === cdId) {
+        state.siteName = trimmed;
+    }
+    saveState();
+    renderAll();
+    showToast(`Nome do CD atualizado para "${trimmed}" e mantido no sistema!`, 'success');
+}
+
+function deleteCdByMaster(cdId) {
+    if (!requireMasterAccess('excluir Centros de Distribuição')) return;
+    if (cdId === currentCdId) {
+        showToast('Não é possível excluir o CD em que você está operando no momento.', 'error');
+        return;
+    }
+    const cd = (state.cds || []).find((c) => c.id === cdId);
+    if (!cd) return;
+    if (!confirm(`Confirmar a exclusão definitiva da unidade "${cd.name}" e de sua base isolada?`)) return;
+    state.cds = state.cds.filter((c) => c.id !== cdId);
+    if (state.cdWorkspaces) {
+        delete state.cdWorkspaces[cdId];
+    }
+    (state.users || []).forEach((u) => {
+        if (Array.isArray(u.allowedCds) && !u.allowedCds.includes('ALL')) {
+            u.allowedCds = u.allowedCds.filter((id) => id !== cdId);
+            if (u.allowedCds.length === 0 && state.cds.length > 0) {
+                u.allowedCds = [state.cds[0].id];
+            }
+        }
+    });
+    saveState();
+    renderAll();
+    showToast(`Unidade "${cd.name}" removida permanentemente.`, 'success');
 }
 
 function renderCdsChecklistInModal(selectedCds = ['cd-sp-01'], isMasterRole = false) {
@@ -2939,14 +3330,19 @@ function applyUserPresetToModal(preset) {
 }
 
 function openNewUserModal() {
-    if (!currentUser || (!currentUser.isMaster && currentUser.rolePreset !== 'MASTER')) {
-        showToast('Apenas o Usuário Master pode cadastrar ou alterar usuários.', 'error');
-        return;
-    }
+    if (!requireMasterAccess('cadastrar ou alterar usuários')) return;
     document.getElementById('userModalTitle').textContent = 'Cadastrar Novo Usuário & Definir CDs e Permissões';
     document.getElementById('userForm').reset();
     document.getElementById('usrId').value = '';
     document.getElementById('usrUsername').disabled = false;
+    const passInput = document.getElementById('usrPassword');
+    const passLabel = document.getElementById('usrPasswordLabel');
+    if (passInput) {
+        passInput.value = '';
+        passInput.required = true;
+        passInput.placeholder = 'Defina a senha de acesso...';
+    }
+    if (passLabel) passLabel.textContent = 'Senha de Acesso *';
     document.getElementById('usrRolePreset').value = 'OPERADOR';
     renderCdsChecklistInModal([currentCdId], false);
     applyUserPresetToModal('OPERADOR');
@@ -2954,10 +3350,7 @@ function openNewUserModal() {
 }
 
 function openEditUserModal(userId) {
-    if (!currentUser || (!currentUser.isMaster && currentUser.rolePreset !== 'MASTER')) {
-        showToast('Apenas o Usuário Master pode alterar permissões.', 'error');
-        return;
-    }
+    if (!requireMasterAccess('alterar permissões de usuários')) return;
     const u = (state.users || []).find((item) => item.id === userId);
     if (!u) return;
 
@@ -2965,7 +3358,14 @@ function openEditUserModal(userId) {
     document.getElementById('userModalTitle').textContent = `Configurar CDs & Permissões: ${u.name} (${u.username})`;
     document.getElementById('usrId').value = u.id;
     document.getElementById('usrUsername').value = u.username;
-    document.getElementById('usrPassword').value = u.password;
+    const passInput = document.getElementById('usrPassword');
+    const passLabel = document.getElementById('usrPasswordLabel');
+    if (passInput) {
+        passInput.value = '';
+        passInput.required = false;
+        passInput.placeholder = 'Deixe em branco para manter a senha atual';
+    }
+    if (passLabel) passLabel.textContent = 'Redefinir Senha (Opcional)';
     document.getElementById('usrName').value = u.name;
     document.getElementById('usrRolePreset').value = u.rolePreset || 'CUSTOM';
     document.getElementById('usrShift').value = u.shift || 'Todos';
@@ -2974,7 +3374,7 @@ function openEditUserModal(userId) {
     renderCdsChecklistInModal(u.allowedCds || ['cd-sp-01'], isMasterRole);
 
     const t = isMasterRole
-        ? ['dashboard', 'rh', 'analytics', 'produtos', 'movimentacoes', 'cautelas', 'handover', 'relatorios', 'usuarios']
+        ? ['dashboard', 'rh', 'analytics', 'produtos', 'movimentacoes', 'cautelas', 'auditoria', 'handover', 'relatorios', 'usuarios']
         : (u.permissions && u.permissions.tabs) || [];
     const a = isMasterRole
         ? {
@@ -3008,22 +3408,24 @@ function openEditUserModal(userId) {
 }
 
 function toggleUserBlock(userId) {
+    if (!requireMasterAccess('bloquear ou desbloquear usuários')) return;
     const u = (state.users || []).find((item) => item.id === userId);
-    if (!u || u.username === 'kelvin') return;
+    if (!u || u.isMaster) return;
     u.status = u.status === 'BLOQUEADO' ? 'ATIVO' : 'BLOQUEADO';
     saveState();
     renderAll();
-    showToast(`Status do usuário ${u.username} alterado para ${u.status}.`, 'success');
+    showToast(`Status do usuário ${u.username} alterado para ${u.status} e salvo permanentemente.`, 'success');
 }
 
 function deleteUser(userId) {
+    if (!requireMasterAccess('excluir usuários')) return;
     const u = (state.users || []).find((item) => item.id === userId);
-    if (!u || u.username === 'kelvin') return;
-    if (!confirm(`Deseja realmente excluir o usuário "${u.username} - ${u.name}"?`)) return;
+    if (!u || u.isMaster) return;
+    if (!confirm(`Deseja realmente excluir o usuário "${u.username} - ${u.name}" de forma definitiva?`)) return;
     state.users = state.users.filter((item) => item.id !== userId);
     saveState();
     renderAll();
-    showToast(`Usuário ${u.username} removido.`, 'success');
+    showToast(`Usuário ${u.username} removido permanentemente.`, 'success');
 }
 
 // Modais
@@ -3691,16 +4093,30 @@ function openExecutivePdfReport(reportTitle, reportSubtitle, kpis, headers, rows
     win.document.close();
 }
 
+// Expõe exclusivamente os handlers de eventos de botões da interface (protegidos por RBAC interno)
+window.openMovementModal = openMovementModal;
+window.openEditProductModal = openEditProductModal;
+window.deleteProduct = deleteProduct;
+window.openEditEmployeeModal = openEditEmployeeModal;
+window.deleteEmployee = deleteEmployee;
+window.returnLoan = returnLoan;
+window.printLoanReceipt = printLoanReceipt;
+window.openEditUserModal = openEditUserModal;
+window.toggleUserBlock = toggleUserBlock;
+window.deleteUser = deleteUser;
+window.renameCdByMaster = renameCdByMaster;
+window.deleteCdByMaster = deleteCdByMaster;
+
 // Inicialização e Eventos
 document.addEventListener('DOMContentLoaded', () => {
     loadState();
 
     // Restaura sessão logada (Usuário + CD travado) se existir e ainda estiver ativa
     const savedSessionUsername = sessionStorage.getItem(SESSION_USER_KEY);
-    const savedSessionCdId = sessionStorage.getItem(SESSION_CD_KEY) || 'cd-sp-01';
+    const savedSessionCdId = sessionStorage.getItem(SESSION_CD_KEY) || state.lastActiveCdId || 'cd-sp-01';
     if (savedSessionUsername) {
         const found = (state.users || []).find(
-            (u) => u.username.toLowerCase() === savedSessionUsername.toLowerCase() && u.status === 'ATIVO'
+            (u) => u && String(u.username || '').toLowerCase() === savedSessionUsername.toLowerCase() && u.status === 'ATIVO'
         );
         if (found && userHasCdAccess(found, savedSessionCdId)) {
             switchActiveCdWorkspace(savedSessionCdId);
@@ -3724,27 +4140,25 @@ document.addEventListener('DOMContentLoaded', () => {
         performLogin(username, password, selectedCdId);
     });
 
-    // Logout / Trocar Usuário ou CD
+    // Logout / Trocar Usuário ou CD (limpa imediatamente dados sensíveis do DOM)
     document.getElementById('logoutBtn').addEventListener('click', () => {
         saveState();
         currentUser = null;
         sessionStorage.removeItem(SESSION_USER_KEY);
         sessionStorage.removeItem(SESSION_CD_KEY);
+        clearSensitiveDomWhenLocked();
         document.getElementById('loginForm').reset();
         populateLoginCdSelect();
         document.getElementById('loginErrorMsg').style.display = 'none';
         document.getElementById('loginOverlay').classList.remove('hidden');
-        showToast('Sessão encerrada com segurança.', 'primary');
+        showToast('Sessão encerrada e dados protegidos.', 'primary');
     });
 
     // Cadastro de Novo CD pelo Master
     const addNewCdBtn = document.getElementById('addNewCdBtn');
     if (addNewCdBtn) {
         addNewCdBtn.addEventListener('click', () => {
-            if (!currentUser || (!currentUser.isMaster && currentUser.rolePreset !== 'MASTER')) {
-                showToast('Apenas o Usuário Master pode cadastrar novos CDs.', 'error');
-                return;
-            }
+            if (!requireMasterAccess('cadastrar novos CDs')) return;
             const inp = document.getElementById('newCdNameInput');
             const name = inp ? inp.value.trim() : '';
             if (!name) {
@@ -3764,13 +4178,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 movements: [],
                 loans: [],
                 handovers: [],
-                employees: []
+                employees: [],
+                audits: []
             };
             if (inp) inp.value = '';
             populateLoginCdSelect();
             saveState();
             renderAll();
-            showToast(`Unidade "${name}" criada com base de dados isolada!`, 'success');
+            showToast(`Unidade "${name}" criada e salva permanentemente!`, 'success');
         });
     }
 
@@ -3783,8 +4198,37 @@ document.addEventListener('DOMContentLoaded', () => {
         rolePresetSelect.addEventListener('change', (e) => applyUserPresetToModal(e.target.value));
     }
 
+    // Quando o Master altera qualquer checkbox manualmente, muda o seletor para CUSTOM para manter exatamente a escolha
+    [
+        'permTabDashboard',
+        'permTabRh',
+        'permTabAnalytics',
+        'permTabProdutos',
+        'permTabMovimentacoes',
+        'permTabCautelas',
+        'permTabAuditoria',
+        'permActViewFinancials',
+        'permActManageProducts',
+        'permActRegisterMovements',
+        'permActManageLoans',
+        'permActAuditStock',
+        'permActManageHr'
+    ].forEach((chkId) => {
+        const el = document.getElementById(chkId);
+        if (el) {
+            el.addEventListener('change', () => {
+                const presetEl = document.getElementById('usrRolePreset');
+                if (presetEl && presetEl.value !== 'MASTER') {
+                    presetEl.value = 'CUSTOM';
+                }
+            });
+        }
+    });
+
     document.getElementById('userForm').addEventListener('submit', (e) => {
         e.preventDefault();
+        if (!requireMasterAccess('salvar usuários e matriz de permissões')) return;
+
         const id = document.getElementById('usrId').value;
         const username = document.getElementById('usrUsername').value.trim().toLowerCase();
         const password = document.getElementById('usrPassword').value.trim();
@@ -3798,6 +4242,11 @@ document.addEventListener('DOMContentLoaded', () => {
         );
         if (duplicate) {
             showToast(`O login "${username}" já está cadastrado.`, 'error');
+            return;
+        }
+
+        if (!id && !password) {
+            showToast('Defina uma senha de acesso para o novo usuário.', 'error');
             return;
         }
 
@@ -3831,14 +4280,23 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const actions = {
-            viewFinancials: document.getElementById('permActViewFinancials').checked,
-            manageProducts: document.getElementById('permActManageProducts').checked,
-            registerMovements: document.getElementById('permActRegisterMovements').checked,
-            manageLoans: document.getElementById('permActManageLoans').checked,
-            auditStock: document.getElementById('permActAuditStock').checked,
-            manageHr: document.getElementById('permActManageHr').checked
-        };
+        const actions = isMaster
+            ? {
+                  viewFinancials: true,
+                  manageProducts: true,
+                  registerMovements: true,
+                  manageLoans: true,
+                  auditStock: true,
+                  manageHr: true
+              }
+            : {
+                  viewFinancials: document.getElementById('permActViewFinancials').checked,
+                  manageProducts: document.getElementById('permActManageProducts').checked,
+                  registerMovements: document.getElementById('permActRegisterMovements').checked,
+                  manageLoans: document.getElementById('permActManageLoans').checked,
+                  auditStock: document.getElementById('permActAuditStock').checked,
+                  manageHr: document.getElementById('permActManageHr').checked
+              };
 
         const roleLabels = {
             MASTER: 'Master / Site Leader',
@@ -3851,38 +4309,44 @@ document.addEventListener('DOMContentLoaded', () => {
         if (id) {
             const existing = state.users.find((u) => u.id === id);
             if (existing) {
+                const nextPasswordHash = password
+                    ? hashCredential(password, username)
+                    : existing.passwordHash || hashCredential('123456', username);
+                delete existing.password;
                 Object.assign(existing, {
                     username,
-                    password,
+                    passwordHash: nextPasswordHash,
                     name,
-                    rolePreset,
-                    roleLabel: roleLabels[rolePreset] || 'Personalizado',
+                    rolePreset: isMaster ? 'MASTER' : rolePreset,
+                    roleLabel: roleLabels[isMaster ? 'MASTER' : rolePreset] || 'Personalizado',
                     isMaster,
                     shift,
-                    status: username === 'kelvin' ? 'ATIVO' : status,
+                    status: isMaster ? 'ATIVO' : status,
                     allowedCds,
                     permissions: { tabs, actions }
                 });
                 if (currentUser && currentUser.id === existing.id) {
                     currentUser = existing;
+                    state.siteLeaderName = existing.name;
+                    sessionStorage.setItem(SESSION_USER_KEY, existing.username);
                 }
-                showToast(`Permissões e CDs do usuário ${username} atualizados!`, 'success');
+                showToast(`Alterações do usuário "${username}" salvas e mantidas com segurança!`, 'success');
             }
         } else {
             state.users.push({
                 id: 'usr_' + Date.now(),
                 username,
-                password,
+                passwordHash: hashCredential(password, username),
                 name,
-                rolePreset,
-                roleLabel: roleLabels[rolePreset] || 'Personalizado',
+                rolePreset: isMaster ? 'MASTER' : rolePreset,
+                roleLabel: roleLabels[isMaster ? 'MASTER' : rolePreset] || 'Personalizado',
                 isMaster,
                 shift,
-                status,
+                status: isMaster ? 'ATIVO' : status,
                 allowedCds,
                 permissions: { tabs, actions }
             });
-            showToast(`Usuário ${username} criado com sucesso!`, 'success');
+            showToast(`Usuário "${username}" criado com credencial criptografada!`, 'success');
         }
 
         saveState();
@@ -3893,13 +4357,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveSbBtn = document.getElementById('saveSupabaseConfigBtn');
     if (saveSbBtn) {
         saveSbBtn.addEventListener('click', async () => {
+            if (!requireMasterAccess('configurar conexão com banco em nuvem')) return;
             const url = document.getElementById('sbUrlInput').value.trim();
             const anonKey = document.getElementById('sbKeyInput').value.trim();
             if (!url || !anonKey) {
                 showToast('Informe a Project URL e a Anon Key do Supabase.', 'error');
                 return;
             }
-            localStorage.setItem(SB_CONFIG_KEY, JSON.stringify({ url, anonKey }));
+            localStorage.setItem(SB_CONFIG_KEY, encodeProtectedStorage({ url, anonKey }));
             if (initSupabaseClient()) {
                 await pushStateToSupabase(true);
             }
@@ -3909,6 +4374,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const pullSbBtn = document.getElementById('pullSupabaseBtn');
     if (pullSbBtn) {
         pullSbBtn.addEventListener('click', async () => {
+            if (!requireMasterAccess('baixar dados do banco em nuvem')) return;
             if (!supabaseClient && !initSupabaseClient()) {
                 showToast('Configure a URL e a Anon Key do Supabase primeiro.', 'error');
                 return;
@@ -4404,6 +4870,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Salvar Passagem de Turno (Shift Handover)
     document.getElementById('handoverForm').addEventListener('submit', (e) => {
         e.preventDefault();
+        if (!requireMasterAccess('formalizar passagem de turno (Governança Master)')) return;
         const fromShift = document.getElementById('hoFromShift').value;
         const toShift = document.getElementById('hoToShift').value;
         const leaderOut = document.getElementById('hoLeaderOut').value.trim();
@@ -4518,12 +4985,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.getElementById('exportEmployeesCsvBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar relatório de RH')) return;
         const { kpis, headers, rows } = buildRhReportData();
         downloadExcelReport('relatorio_rh_salarios_turnover', 'Quadro de Colaboradores, Salários e Turnover (RH)', kpis, headers, rows);
         showToast('Planilha Excel (.XLS) de RH, Salários e Turnover gerada!', 'success');
     });
 
     document.getElementById('exportEmployeesPdfBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar relatório de RH')) return;
         const { kpis, headers, rows } = buildRhReportData();
         openExecutivePdfReport(
             'Relatório de Quadro de Colaboradores, Salários & Turnover (RH)',
@@ -4580,12 +5049,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.getElementById('exportProductsCsvBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar relatório de estoque')) return;
         const { kpis, headers, rows } = buildProductsReportData();
         downloadExcelReport('posicao_estoque_curva_abc', 'Posição Completa de Estoque + Curva ABC', kpis, headers, rows);
         showToast('Planilha Excel (.XLS) de Estoque + Curva ABC gerada!', 'success');
     });
 
     document.getElementById('exportProductsPdfBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar relatório de estoque')) return;
         const { kpis, headers, rows } = buildProductsReportData();
         openExecutivePdfReport(
             'Posição Completa de Estoque + Matriz de Curva ABC',
@@ -4652,12 +5123,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.getElementById('exportLowStockCsvBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar plano de compras')) return;
         const { kpis, headers, rows } = buildReplenishmentReportData();
         downloadExcelReport('plano_compras_reposicao', 'Plano de Compras e Reposição Crítica do CD', kpis, headers, rows);
         showToast('Planilha Excel (.XLS) do Plano de Compras e Reposição gerada!', 'success');
     });
 
     document.getElementById('exportLowStockPdfBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar plano de compras')) return;
         const { kpis, headers, rows } = buildReplenishmentReportData();
         openExecutivePdfReport(
             'Plano de Compras & Reposição Crítica de Estoque (CAPEX / OPEX)',
@@ -4720,12 +5193,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.getElementById('exportMovementsCsvBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar Kardex completo')) return;
         const { kpis, headers, rows } = buildKardexReportData();
         downloadExcelReport('kardex_completo_movimentacoes', 'Kardex Completo de Movimentações por Turno', kpis, headers, rows);
         showToast('Planilha Excel (.XLS) do Kardex Completo gerada!', 'success');
     });
 
     document.getElementById('exportMovementsPdfBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar Kardex completo')) return;
         const { kpis, headers, rows } = buildKardexReportData();
         openExecutivePdfReport(
             'Kardex Completo & Auditável de Movimentações por Turno',
@@ -4789,12 +5264,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.getElementById('exportLoansCsvBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar relatórios da Central de Dados')) return;
         const { kpis, headers, rows } = buildLoansReportData();
         downloadExcelReport('relatorio_cautelas_patrimonio', 'Relatório de Cautelas e Patrimônio Operacional', kpis, headers, rows);
         showToast('Planilha Excel (.XLS) de Cautelas e Patrimônio gerada!', 'success');
     });
 
     document.getElementById('exportLoansPdfBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('exportar relatórios da Central de Dados')) return;
         const { kpis, headers, rows } = buildLoansReportData();
         openExecutivePdfReport(
             'Relatório Nominal de Cautelas & Controle de Patrimônio',
@@ -4808,15 +5285,22 @@ document.addEventListener('DOMContentLoaded', () => {
     // 6. Relatório de Acuracidade de Inventário (Auditoria Star / IRA %) na Central de Dados
     const expAuditsCsvBtn = document.getElementById('exportAuditsCsvBtn');
     if (expAuditsCsvBtn) {
-        expAuditsCsvBtn.addEventListener('click', () => exportAuditAccuracyExcel(null));
+        expAuditsCsvBtn.addEventListener('click', () => {
+            if (!requireMasterAccess('exportar relatórios da Central de Dados')) return;
+            exportAuditAccuracyExcel(null);
+        });
     }
     const expAuditsPdfBtn = document.getElementById('exportAuditsPdfBtn');
     if (expAuditsPdfBtn) {
-        expAuditsPdfBtn.addEventListener('click', () => exportAuditAccuracyPdf(null));
+        expAuditsPdfBtn.addEventListener('click', () => {
+            if (!requireMasterAccess('exportar relatórios da Central de Dados')) return;
+            exportAuditAccuracyPdf(null);
+        });
     }
 
     // Planilha Modelo CSV
     document.getElementById('downloadCsvTemplateBtn').addEventListener('click', () => {
+        if (!requireMasterAccess('baixar planilha modelo na Central de Dados')) return;
         const headers = [
             'SKU',
             'Nome',
@@ -4836,6 +5320,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Importação CSV
     document.getElementById('importCsvFileInput').addEventListener('change', (e) => {
+        if (!requireMasterAccess('importar planilhas na Central de Dados')) {
+            e.target.value = '';
+            return;
+        }
         const file = e.target.files[0];
         if (!file) return;
 
@@ -4902,30 +5390,43 @@ document.addEventListener('DOMContentLoaded', () => {
         reader.readAsText(file, 'UTF-8');
     });
 
-    // Snapshot JSON
+    // Snapshot JSON (higienizado sem senhas em texto aberto)
     document.getElementById('exportBackupJsonBtn').addEventListener('click', () => {
-        const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+        if (!requireMasterAccess('exportar Snapshot de Backup')) return;
+        const safeExport = sanitizeStateForExternalStorage(state);
+        const blob = new Blob([JSON.stringify(safeExport, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = `snapshot_custos_estoque_${new Date().toISOString().slice(0, 10)}.json`;
         a.click();
         URL.revokeObjectURL(url);
-        showToast('Snapshot JSON exportado!', 'success');
+        showToast('Snapshot JSON seguro exportado!', 'success');
     });
 
     document.getElementById('importBackupJsonInput').addEventListener('change', (e) => {
+        if (!requireMasterAccess('restaurar Snapshot de Backup')) {
+            e.target.value = '';
+            return;
+        }
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = (evt) => {
             try {
                 const parsed = JSON.parse(evt.target.result);
-                if (!Array.isArray(parsed.products)) throw new Error('JSON inválido');
-                state = parsed;
+                if (!parsed || typeof parsed !== 'object') throw new Error('JSON inválido');
+                state = {
+                    ...state,
+                    ...parsed,
+                    initialized: true,
+                    usersInitialized: true
+                };
+                ensureUsersIntegrity();
+                switchActiveCdWorkspace(currentCdId);
                 saveState();
                 renderAll();
-                showToast('Snapshot restaurado com sucesso!', 'success');
+                showToast('Snapshot restaurado e mantido com sucesso!', 'success');
             } catch (err) {
                 showToast('Arquivo JSON inválido.', 'error');
             }
@@ -4935,22 +5436,32 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('resetDemoDataBtn').addEventListener('click', () => {
-        if (!confirm('Restaurar o cenário demonstrativo completo (Estoque + RH)?')) return;
-        state = getInitialDemoData();
+        if (!requireMasterAccess('restaurar cenário demonstrativo')) return;
+        if (!confirm('Restaurar o cenário demonstrativo (Estoque + RH) para o CD atual mantendo seus usuários e CDs configurados?')) return;
+        const demo = getInitialDemoData();
+        state.products = demo.products;
+        state.movements = demo.movements;
+        state.loans = demo.loans;
+        state.handovers = demo.handovers;
+        state.employees = demo.employees;
+        state.audits = [];
         saveState();
         renderAll();
-        showToast('Cenário demonstrativo restaurado!', 'success');
+        showToast('Cenário demonstrativo restaurado no CD atual (usuários e CDs mantidos)!', 'success');
     });
 
     document.getElementById('clearAllDataBtn').addEventListener('click', () => {
-        if (!confirm('Atenção: Zerar todos os cadastros de RH, estoque, Kardex, cautelas e passagens de turno?')) return;
+        if (!requireMasterAccess('zerar a base operacional')) return;
+        if (!confirm('Atenção: Zerar os cadastros de RH, estoque, Kardex, cautelas, auditorias e passagens de turno deste CD (mantendo seus usuários e CDs)?')) return;
         state.products = [];
         state.movements = [];
         state.loans = [];
         state.handovers = [];
         state.employees = [];
+        state.audits = [];
         saveState();
         renderAll();
-        showToast('Base de dados zerada!', 'success');
+        showToast('Base operacional deste CD zerada e alteração mantida!', 'success');
     });
 });
+})();

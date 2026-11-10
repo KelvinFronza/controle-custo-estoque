@@ -5,13 +5,20 @@ const STORAGE_KEY = 'site_leader_inventory_v1';
 const MASTER_BACKUP_KEY = 'site_leader_master_backup_v2';
 const SESSION_USER_KEY = 'cd_logged_user_v1';
 const SESSION_CD_KEY = 'cd_logged_site_v1';
+const SESSION_TOKEN_KEY = 'cd_session_token_v1';
+const DEVICE_ID_KEY = 'cd_device_terminal_id_v1';
+const LOCAL_TAB_HB_KEY = 'cd_local_tab_hb_v1';
+const SESSION_TTL_MS = 90 * 1000; // 90s de tolerância máxima sem heartbeat antes de expirar sessão órfã
+const SESSION_HEARTBEAT_MS = 15 * 1000; // Heartbeat a cada 15s para manter bloqueio ativo entre máquinas
 const STORAGE_CIPHER_KEY = 'CD_ERP_CORP_SHIELD_2026_KEY_V2';
 
 // Usuário e CD autenticados e travados na sessão atual (escopo privado, inacessível via console)
 let currentUser = null;
 let currentCdId = 'cd-sp-01';
+let sessionHeartbeatTimer = null;
+let localTabHeartbeatTimer = null;
 
-// Estado global corporativo (Macro & Micro do CD) com isolamento por CD e controle de revisão
+// Estado global corporativo (Macro & Micro do CD) com isolamento por CD, revisão e controle de sessões únicas
 let state = {
     initialized: false,
     usersInitialized: false,
@@ -29,7 +36,9 @@ let state = {
     audits: [],
     users: [],
     cds: [],
-    cdWorkspaces: {}
+    cdWorkspaces: {},
+    activeSessions: {},
+    sessionRevocations: {}
 };
 
 // Sessão de Auditoria Star em andamento
@@ -982,11 +991,20 @@ function loadState() {
                 cdWorkspaces:
                     parsed.cdWorkspaces && typeof parsed.cdWorkspaces === 'object'
                         ? parsed.cdWorkspaces
+                        : {},
+                activeSessions:
+                    parsed.activeSessions && typeof parsed.activeSessions === 'object'
+                        ? parsed.activeSessions
+                        : {},
+                sessionRevocations:
+                    parsed.sessionRevocations && typeof parsed.sessionRevocations === 'object'
+                        ? parsed.sessionRevocations
                         : {}
             };
 
             const targetCd = sessionStorage.getItem(SESSION_CD_KEY) || state.lastActiveCdId || 'cd-sp-01';
             ensureUsersIntegrity();
+            cleanupExpiredSessions();
             switchActiveCdWorkspace(targetCd);
             persistStateLocally();
         } else {
@@ -998,6 +1016,8 @@ function loadState() {
             state.lastActiveCdId = 'cd-sp-01';
             state.cds = getDefaultCds();
             state.cdWorkspaces = {};
+            state.activeSessions = {};
+            state.sessionRevocations = {};
             ensureUsersIntegrity();
             switchActiveCdWorkspace('cd-sp-01');
             syncCurrentCdToWorkspaces();
@@ -1012,6 +1032,8 @@ function loadState() {
         state.updatedAt = new Date().toISOString();
         state.cds = getDefaultCds();
         state.cdWorkspaces = {};
+        state.activeSessions = {};
+        state.sessionRevocations = {};
         ensureUsersIntegrity();
         switchActiveCdWorkspace('cd-sp-01');
     }
@@ -1074,9 +1096,10 @@ async function pushStateToSupabase(showNotification = false) {
     try {
         syncCurrentCdToWorkspaces();
         ensureUsersIntegrity();
+        cleanupExpiredSessions();
         const safePayload = sanitizeStateForExternalStorage(state);
 
-        // 1. Salva o snapshot completo (com hashes de senha e isolamento por CD) na tabela cd_app_state
+        // 1. Salva o snapshot completo (com hashes de senha, isolamento por CD e trava de sessão única) na tabela cd_app_state
         const { error } = await supabaseClient.from('cd_app_state').upsert(
             {
                 site_id: 'cd-principal',
@@ -1127,8 +1150,19 @@ async function pullStateFromSupabase(showNotification = false) {
             const cloudTime = new Date(data.payload.updatedAt || data.updated_at || 0).getTime();
             const localTime = new Date(state.updatedAt || 0).getTime();
 
-            // Proteção crítica: se o estado local possui revisão/modificação do Master mais recente ou igual, NÃO sobrescreve!
+            // Mescla sempre as sessões ativas e revogações entre máquinas (garante bloqueio multi-máquina em tempo real)
+            const mergedSessionState = mergeActiveSessions(
+                state.activeSessions,
+                data.payload.activeSessions,
+                state.sessionRevocations,
+                data.payload.sessionRevocations
+            );
+            state.activeSessions = mergedSessionState.activeSessions;
+            state.sessionRevocations = mergedSessionState.sessionRevocations;
+
+            // Proteção crítica: se o estado local possui revisão/modificação do Master mais recente ou igual, NÃO sobrescreve dados!
             if (!showNotification && state.initialized && (localRev >= cloudRev || localTime >= cloudTime)) {
+                persistStateLocally();
                 if (localRev > cloudRev || localTime > cloudTime || !data.payload.cdWorkspaces) {
                     await pushStateToSupabase(false);
                 }
@@ -1155,7 +1189,9 @@ async function pullStateFromSupabase(showNotification = false) {
                 cdWorkspaces:
                     data.payload.cdWorkspaces && typeof data.payload.cdWorkspaces === 'object'
                         ? data.payload.cdWorkspaces
-                        : currentWorkspacesBackup
+                        : currentWorkspacesBackup,
+                activeSessions: mergedSessionState.activeSessions,
+                sessionRevocations: mergedSessionState.sessionRevocations
             };
 
             ensureUsersIntegrity();
@@ -1328,14 +1364,443 @@ function getMovementTypeBadge(type) {
 }
 
 // ============================================================================
+// CONTROLE DE SESSÃO ÚNICA (BLOQUEIO DE LOGIN SIMULTÂNEO EM OUTRA MÁQUINA)
+// ============================================================================
+
+function getLocalDeviceId() {
+    let devId = localStorage.getItem(DEVICE_ID_KEY);
+    if (!devId) {
+        const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
+        const ts = Date.now().toString(36).slice(-4).toUpperCase();
+        devId = `MAQ-${rand}${ts}`;
+        localStorage.setItem(DEVICE_ID_KEY, devId);
+    }
+    return devId;
+}
+
+function getLocalDeviceLabel() {
+    const devId = getLocalDeviceId();
+    const ua = navigator.userAgent || '';
+    let os = 'Terminal';
+    if (/Windows/i.test(ua)) os = 'Windows';
+    else if (/Mac/i.test(ua)) os = 'Mac';
+    else if (/Android/i.test(ua)) os = 'Android';
+    else if (/iPhone|iPad/i.test(ua)) os = 'iOS';
+    else if (/Linux/i.test(ua)) os = 'Linux';
+
+    let browser = 'Navegador';
+    if (/Edg\//i.test(ua)) browser = 'Edge';
+    else if (/Chrome\//i.test(ua)) browser = 'Chrome';
+    else if (/Firefox\//i.test(ua)) browser = 'Firefox';
+    else if (/Safari\//i.test(ua)) browser = 'Safari';
+
+    return `${os} • ${browser} [${devId}]`;
+}
+
+function getOrCreateTabSessionToken() {
+    let tok = sessionStorage.getItem(SESSION_TOKEN_KEY);
+    if (!tok) {
+        tok = `SESS-${Math.random().toString(36).slice(2, 10).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+        sessionStorage.setItem(SESSION_TOKEN_KEY, tok);
+    }
+    return tok;
+}
+
+function updateLocalTabHeartbeat() {
+    if (!currentUser) return;
+    try {
+        const raw = localStorage.getItem(LOCAL_TAB_HB_KEY);
+        const map = raw ? JSON.parse(raw) : {};
+        const uKey = String(currentUser.username || '').trim().toLowerCase();
+        map[uKey] = {
+            sessionToken: getOrCreateTabSessionToken(),
+            deviceId: getLocalDeviceId(),
+            ts: Date.now()
+        };
+        localStorage.setItem(LOCAL_TAB_HB_KEY, JSON.stringify(map));
+    } catch (e) {}
+}
+
+function clearLocalTabHeartbeat(username) {
+    if (!username) return;
+    try {
+        const raw = localStorage.getItem(LOCAL_TAB_HB_KEY);
+        if (!raw) return;
+        const map = JSON.parse(raw);
+        const uKey = String(username || '').trim().toLowerCase();
+        delete map[uKey];
+        localStorage.setItem(LOCAL_TAB_HB_KEY, JSON.stringify(map));
+    } catch (e) {}
+}
+
+function isAnotherLocalTabAlive(username, expectedSessionToken) {
+    try {
+        const raw = localStorage.getItem(LOCAL_TAB_HB_KEY);
+        if (!raw) return false;
+        const map = JSON.parse(raw);
+        const uKey = String(username || '').trim().toLowerCase();
+        const entry = map[uKey];
+        if (!entry) return false;
+        if (entry.sessionToken && entry.sessionToken !== expectedSessionToken && Date.now() - Number(entry.ts || 0) < 10000) {
+            return true;
+        }
+        return false;
+    } catch (e) {
+        return false;
+    }
+}
+
+function mergeActiveSessions(localSessions = {}, cloudSessions = {}, localRevocations = {}, cloudRevocations = {}) {
+    const mergedRevocations = {};
+    const allRevKeys = new Set([
+        ...Object.keys(localRevocations || {}),
+        ...Object.keys(cloudRevocations || {})
+    ]);
+    allRevKeys.forEach((k) => {
+        const uKey = String(k).toLowerCase();
+        const tLocal = Number((localRevocations || {})[k]) || 0;
+        const tCloud = Number((cloudRevocations || {})[k]) || 0;
+        mergedRevocations[uKey] = Math.max(tLocal, tCloud);
+    });
+
+    const mergedSessions = {};
+    const allSessKeys = new Set([
+        ...Object.keys(localSessions || {}),
+        ...Object.keys(cloudSessions || {})
+    ]);
+    const now = Date.now();
+
+    allSessKeys.forEach((k) => {
+        const uKey = String(k).toLowerCase();
+        const sLocal = (localSessions || {})[k];
+        const sCloud = (cloudSessions || {})[k];
+        let chosen = null;
+
+        if (sLocal && sCloud) {
+            const localSeen = new Date(sLocal.lastSeenAt || sLocal.startedAt || 0).getTime();
+            const cloudSeen = new Date(sCloud.lastSeenAt || sCloud.startedAt || 0).getTime();
+            chosen = cloudSeen >= localSeen ? sCloud : sLocal;
+        } else {
+            chosen = sCloud || sLocal;
+        }
+
+        if (!chosen) return;
+        const chosenSeenMs = new Date(chosen.lastSeenAt || chosen.startedAt || 0).getTime();
+        const chosenStartMs = new Date(chosen.startedAt || chosen.lastSeenAt || 0).getTime();
+        const revokedAtMs = Number(mergedRevocations[uKey]) || 0;
+
+        // Se a sessão foi encerrada/revogada ou expirou por falta de heartbeat, descarta
+        if (revokedAtMs > 0 && (chosenStartMs <= revokedAtMs || chosenSeenMs <= revokedAtMs)) {
+            return;
+        }
+        if (now - chosenSeenMs > SESSION_TTL_MS) {
+            return;
+        }
+        mergedSessions[uKey] = chosen;
+    });
+
+    return {
+        activeSessions: mergedSessions,
+        sessionRevocations: mergedRevocations
+    };
+}
+
+function cleanupExpiredSessions() {
+    if (!state.activeSessions || typeof state.activeSessions !== 'object') {
+        state.activeSessions = {};
+    }
+    if (!state.sessionRevocations || typeof state.sessionRevocations !== 'object') {
+        state.sessionRevocations = {};
+    }
+    const merged = mergeActiveSessions(
+        state.activeSessions,
+        {},
+        state.sessionRevocations,
+        {}
+    );
+    state.activeSessions = merged.activeSessions;
+    state.sessionRevocations = merged.sessionRevocations;
+}
+
+// Verifica se o usuário já está logado em outra máquina ou outra aba ativa
+function getActiveSessionLockForUser(rawUsername) {
+    cleanupExpiredSessions();
+    const uKey = String(rawUsername || '').trim().toLowerCase();
+    if (!uKey) return null;
+
+    const sess = state.activeSessions[uKey];
+    if (!sess) return null;
+
+    const lastSeenMs = new Date(sess.lastSeenAt || sess.startedAt || 0).getTime();
+    if (Date.now() - lastSeenMs > SESSION_TTL_MS) {
+        delete state.activeSessions[uKey];
+        return null;
+    }
+
+    const myDeviceId = getLocalDeviceId();
+    const myTabToken = sessionStorage.getItem(SESSION_TOKEN_KEY);
+
+    // 1. Bloqueio entre máquinas / navegadores distintos
+    if (sess.deviceId && sess.deviceId !== myDeviceId) {
+        return {
+            locked: true,
+            reason: 'OTHER_MACHINE',
+            session: sess
+        };
+    }
+
+    // 2. Mesma máquina: verifica se já é a própria aba atual (ex: F5) ou se há outra aba aberta com sessão ativa
+    if (myTabToken && sess.sessionToken === myTabToken) {
+        return null;
+    }
+
+    if (isAnotherLocalTabAlive(uKey, myTabToken || '')) {
+        return {
+            locked: true,
+            reason: 'OTHER_TAB',
+            session: sess
+        };
+    }
+
+    return null;
+}
+
+function registerActiveUserSession(user, cdObj) {
+    if (!user) return;
+    cleanupExpiredSessions();
+    const uKey = String(user.username || '').trim().toLowerCase();
+    const nowIso = new Date().toISOString();
+    const sessionToken = getOrCreateTabSessionToken();
+
+    state.activeSessions[uKey] = {
+        username: uKey,
+        userNameDisplay: user.name,
+        deviceId: getLocalDeviceId(),
+        deviceLabel: getLocalDeviceLabel(),
+        sessionToken,
+        cdId: cdObj ? cdObj.id : currentCdId,
+        cdName: cdObj ? cdObj.name : state.siteName,
+        startedAt: nowIso,
+        lastSeenAt: nowIso
+    };
+    updateLocalTabHeartbeat();
+}
+
+function releaseActiveUserSession(rawUsername) {
+    const uKey = String(rawUsername || '').trim().toLowerCase();
+    if (!uKey) return;
+    if (!state.activeSessions) state.activeSessions = {};
+    if (!state.sessionRevocations) state.sessionRevocations = {};
+    delete state.activeSessions[uKey];
+    state.sessionRevocations[uKey] = Date.now();
+    clearLocalTabHeartbeat(uKey);
+}
+
+// Sincroniza sessões ativas do Supabase imediatamente antes de validar um login
+async function syncSessionsFromCloudBeforeLogin() {
+    if (!supabaseClient && !initSupabaseClient()) return;
+    try {
+        const { data, error } = await supabaseClient
+            .from('cd_app_state')
+            .select('payload, updated_at')
+            .eq('site_id', 'cd-principal')
+            .maybeSingle();
+
+        if (error || !data || !data.payload) return;
+
+        const merged = mergeActiveSessions(
+            state.activeSessions,
+            data.payload.activeSessions,
+            state.sessionRevocations,
+            data.payload.sessionRevocations
+        );
+        state.activeSessions = merged.activeSessions;
+        state.sessionRevocations = merged.sessionRevocations;
+
+        // Se a nuvem tiver revisão mais recente (ex: Master cadastrou/alterou usuário em outra máquina), atualiza usuários e CDs
+        const cloudRev = Number(data.payload.revision) || 0;
+        const localRev = Number(state.revision) || 0;
+        if (cloudRev > localRev) {
+            if (Array.isArray(data.payload.users) && data.payload.users.length > 0) {
+                state.users = data.payload.users;
+            }
+            if (Array.isArray(data.payload.cds) && data.payload.cds.length > 0) {
+                state.cds = data.payload.cds;
+            }
+            if (data.payload.cdWorkspaces && typeof data.payload.cdWorkspaces === 'object') {
+                state.cdWorkspaces = data.payload.cdWorkspaces;
+            }
+            state.revision = cloudRev;
+            state.updatedAt = data.payload.updatedAt || data.updated_at || state.updatedAt;
+            ensureUsersIntegrity();
+        }
+        persistStateLocally();
+    } catch (e) {
+        console.warn('Aviso ao consultar sessões em nuvem:', e);
+    }
+}
+
+function forceTerminateCurrentSession(reasonMsg) {
+    stopSessionHeartbeats();
+    if (currentUser) {
+        clearLocalTabHeartbeat(currentUser.username);
+    }
+    currentUser = null;
+    sessionStorage.removeItem(SESSION_USER_KEY);
+    sessionStorage.removeItem(SESSION_CD_KEY);
+    sessionStorage.removeItem(SESSION_TOKEN_KEY);
+    clearSensitiveDomWhenLocked();
+    const loginFormEl = document.getElementById('loginForm');
+    if (loginFormEl) loginFormEl.reset();
+    populateLoginCdSelect();
+    const errBox = document.getElementById('loginErrorMsg');
+    if (errBox && reasonMsg) {
+        errBox.textContent = reasonMsg;
+        errBox.style.display = 'block';
+    }
+    const overlay = document.getElementById('loginOverlay');
+    if (overlay) overlay.classList.remove('hidden');
+    if (reasonMsg) {
+        showToast(reasonMsg, 'error');
+    }
+}
+
+async function runCloudSessionHeartbeat() {
+    if (!currentUser) return;
+    const uKey = String(currentUser.username || '').trim().toLowerCase();
+    const myDeviceId = getLocalDeviceId();
+    const myTabToken = getOrCreateTabSessionToken();
+    updateLocalTabHeartbeat();
+
+    if (supabaseClient) {
+        try {
+            const { data, error } = await supabaseClient
+                .from('cd_app_state')
+                .select('payload, updated_at')
+                .eq('site_id', 'cd-principal')
+                .maybeSingle();
+
+            if (!error && data && data.payload) {
+                const cloudRevocations = data.payload.sessionRevocations || {};
+                const cloudSessions = data.payload.activeSessions || {};
+                const myLocalSess = (state.activeSessions || {})[uKey];
+                const myStartMs = myLocalSess ? new Date(myLocalSess.startedAt || 0).getTime() : 0;
+                const cloudRevokedAt = Number(cloudRevocations[uKey]) || 0;
+
+                // Se o Master derrubou a sessão remotamente ou bloqueou o usuário
+                if (cloudRevokedAt > 0 && myStartMs > 0 && cloudRevokedAt >= myStartMs) {
+                    delete state.activeSessions[uKey];
+                    state.sessionRevocations[uKey] = cloudRevokedAt;
+                    persistStateLocally();
+                    forceTerminateCurrentSession('🔒 Sua sessão foi encerrada remotamente pelo Usuário Master.');
+                    return;
+                }
+
+                if (Array.isArray(data.payload.users)) {
+                    const cloudUser = data.payload.users.find(
+                        (u) => u && String(u.username || '').toLowerCase() === uKey
+                    );
+                    if (cloudUser && cloudUser.status === 'BLOQUEADO') {
+                        forceTerminateCurrentSession('🔒 Seu usuário foi bloqueado pelo Usuário Master.');
+                        return;
+                    }
+                }
+
+                // Se outra sessão mais recente assumiu por ação Master
+                const cloudSess = cloudSessions[uKey];
+                if (cloudSess && cloudSess.deviceId && cloudSess.deviceId !== myDeviceId) {
+                    const cloudStart = new Date(cloudSess.startedAt || 0).getTime();
+                    if (cloudStart > myStartMs) {
+                        forceTerminateCurrentSession('🔒 Sessão encerrada: este usuário foi desconectado de outro terminal.');
+                        return;
+                    }
+                }
+
+                const merged = mergeActiveSessions(
+                    state.activeSessions,
+                    cloudSessions,
+                    state.sessionRevocations,
+                    cloudRevocations
+                );
+                state.activeSessions = merged.activeSessions;
+                state.sessionRevocations = merged.sessionRevocations;
+            }
+        } catch (e) {}
+    }
+
+    // Renova o timestamp (heartbeat) da sessão ativa desta máquina
+    const currentSess = (state.activeSessions || {})[uKey];
+    const nowIso = new Date().toISOString();
+    state.activeSessions[uKey] = {
+        username: uKey,
+        userNameDisplay: currentUser.name,
+        deviceId: myDeviceId,
+        deviceLabel: getLocalDeviceLabel(),
+        sessionToken: myTabToken,
+        cdId: currentCdId,
+        cdName: state.siteName,
+        startedAt: currentSess && currentSess.startedAt ? currentSess.startedAt : nowIso,
+        lastSeenAt: nowIso
+    };
+    persistStateLocally();
+    if (supabaseClient) {
+        await pushStateToSupabase(false);
+    }
+    if (isCurrentMaster()) {
+        renderUsersModule();
+    }
+}
+
+function startSessionHeartbeats() {
+    stopSessionHeartbeats();
+    updateLocalTabHeartbeat();
+    localTabHeartbeatTimer = setInterval(updateLocalTabHeartbeat, 3000);
+    sessionHeartbeatTimer = setInterval(() => {
+        runCloudSessionHeartbeat();
+    }, SESSION_HEARTBEAT_MS);
+}
+
+function stopSessionHeartbeats() {
+    if (localTabHeartbeatTimer) {
+        clearInterval(localTabHeartbeatTimer);
+        localTabHeartbeatTimer = null;
+    }
+    if (sessionHeartbeatTimer) {
+        clearInterval(sessionHeartbeatTimer);
+        sessionHeartbeatTimer = null;
+    }
+}
+
+// Permite ao Usuário Master encerrar remotamente a sessão de um usuário preso/logado em outra máquina
+async function forceDisconnectUserSession(rawUsername) {
+    if (!requireMasterAccess('encerrar sessões ativas de usuários')) return;
+    const uKey = String(rawUsername || '').trim().toLowerCase();
+    if (!uKey) return;
+
+    if (currentUser && String(currentUser.username || '').toLowerCase() === uKey) {
+        showToast('Use o botão "Sair" no menu lateral para encerrar sua própria sessão.', 'primary');
+        return;
+    }
+
+    releaseActiveUserSession(uKey);
+    saveState();
+    renderAll();
+    showToast(`Sessão ativa de "${uKey}" encerrada remotamente! O usuário já pode logar em outra máquina.`, 'success');
+}
+
+// ============================================================================
 // CONTROLE DE AUTENTICAÇÃO, RBAC MASTER E BLOQUEIO CONTRA VAZAMENTO DE DADOS
 // ============================================================================
 
 let failedLoginAttempts = 0;
 let loginLockoutUntil = 0;
+let isLoginInProgress = false;
 
-function performLogin(rawUsername, rawPassword, rawCdId) {
+async function performLogin(rawUsername, rawPassword, rawCdId) {
+    if (isLoginInProgress) return false;
     const errBox = document.getElementById('loginErrorMsg');
+    const submitBtn = document.getElementById('loginSubmitBtn');
+
     if (Date.now() < loginLockoutUntil) {
         const waitSec = Math.ceil((loginLockoutUntil - Date.now()) / 1000);
         if (errBox) {
@@ -1345,64 +1810,100 @@ function performLogin(rawUsername, rawPassword, rawCdId) {
         return false;
     }
 
-    ensureUsersIntegrity();
-    const username = String(rawUsername || '').trim().toLowerCase();
-    const password = String(rawPassword || '').trim();
-    const cdSelectEl = document.getElementById('loginCdSelect');
-    const selectedCdId = rawCdId || (cdSelectEl ? cdSelectEl.value : 'cd-sp-01') || 'cd-sp-01';
-
-    const user = (state.users || []).find(
-        (u) => u && String(u.username || '').trim().toLowerCase() === username && verifyUserCredential(u, password)
-    );
-
-    if (!user) {
-        failedLoginAttempts += 1;
-        if (failedLoginAttempts >= 5) {
-            loginLockoutUntil = Date.now() + 30000;
-            failedLoginAttempts = 0;
-        }
-        if (errBox) {
-            errBox.textContent = 'Login ou senha inválidos. Verifique suas credenciais.';
-            errBox.style.display = 'block';
-        }
-        return false;
+    isLoginInProgress = true;
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Verificando sessão ativa...';
     }
 
-    failedLoginAttempts = 0;
+    try {
+        // 1. Consulta o Supabase em tempo real antes de autenticar para verificar se já está logado em outra máquina
+        await syncSessionsFromCloudBeforeLogin();
+        ensureUsersIntegrity();
 
-    if (user.status === 'BLOQUEADO') {
-        if (errBox) {
-            errBox.textContent = 'Esta conta foi bloqueada pelo Usuário Master.';
-            errBox.style.display = 'block';
+        const username = String(rawUsername || '').trim().toLowerCase();
+        const password = String(rawPassword || '').trim();
+        const cdSelectEl = document.getElementById('loginCdSelect');
+        const selectedCdId = rawCdId || (cdSelectEl ? cdSelectEl.value : 'cd-sp-01') || 'cd-sp-01';
+
+        const user = (state.users || []).find(
+            (u) => u && String(u.username || '').trim().toLowerCase() === username && verifyUserCredential(u, password)
+        );
+
+        if (!user) {
+            failedLoginAttempts += 1;
+            if (failedLoginAttempts >= 5) {
+                loginLockoutUntil = Date.now() + 30000;
+                failedLoginAttempts = 0;
+            }
+            if (errBox) {
+                errBox.textContent = 'Login ou senha inválidos. Verifique suas credenciais.';
+                errBox.style.display = 'block';
+            }
+            return false;
         }
-        return false;
-    }
 
-    const targetCdObj = (state.cds || []).find((c) => c.id === selectedCdId) || state.cds[0];
-    if (!userHasCdAccess(user, targetCdObj.id)) {
-        if (errBox) {
-            errBox.textContent = `Acesso bloqueado: seu usuário (${user.username}) não possui liberação do Master para operar no "${targetCdObj.name}".`;
-            errBox.style.display = 'block';
+        failedLoginAttempts = 0;
+
+        if (user.status === 'BLOQUEADO') {
+            if (errBox) {
+                errBox.textContent = 'Esta conta foi bloqueada pelo Usuário Master.';
+                errBox.style.display = 'block';
+            }
+            return false;
         }
-        return false;
-    }
 
-    if (errBox) errBox.style.display = 'none';
-    if (currentUser) {
-        syncCurrentCdToWorkspaces();
-    }
-    switchActiveCdWorkspace(targetCdObj.id);
-    currentUser = user;
-    state.siteLeaderName = user.name;
-    sessionStorage.setItem(SESSION_USER_KEY, user.username);
-    sessionStorage.setItem(SESSION_CD_KEY, targetCdObj.id);
-    saveState();
+        const targetCdObj = (state.cds || []).find((c) => c.id === selectedCdId) || state.cds[0];
+        if (!userHasCdAccess(user, targetCdObj.id)) {
+            if (errBox) {
+                errBox.textContent = `Acesso bloqueado: seu usuário (${user.username}) não possui liberação do Master para operar no "${targetCdObj.name}".`;
+                errBox.style.display = 'block';
+            }
+            return false;
+        }
 
-    const overlay = document.getElementById('loginOverlay');
-    if (overlay) overlay.classList.add('hidden');
-    renderAll();
-    showToast(`Bem-vindo(a), ${user.name} • Operando em: ${targetCdObj.name}`, 'success');
-    return true;
+        // 2. BLOQUEIO DE SESSÃO SIMULTÂNEA EM OUTRA MÁQUINA OU OUTRO TERMINAL
+        const activeLock = getActiveSessionLockForUser(user.username);
+        if (activeLock && activeLock.locked) {
+            const s = activeLock.session || {};
+            const machineInfo = s.deviceLabel || s.deviceId || 'Outro Computador';
+            const cdInfo = s.cdName ? ` • Operando em: ${s.cdName}` : '';
+            const blockMsg = `🔒 Acesso Bloqueado: O usuário "${user.username}" já está logado em outra máquina (${machineInfo}${cdInfo}). Encerre a sessão no outro computador antes de entrar.`;
+            if (errBox) {
+                errBox.textContent = blockMsg;
+                errBox.style.display = 'block';
+            }
+            showToast(`Login negado: "${user.username}" já possui sessão ativa em outra máquina!`, 'error');
+            return false;
+        }
+
+        if (errBox) errBox.style.display = 'none';
+        if (currentUser) {
+            syncCurrentCdToWorkspaces();
+        }
+        switchActiveCdWorkspace(targetCdObj.id);
+        currentUser = user;
+        state.siteLeaderName = user.name;
+        sessionStorage.setItem(SESSION_USER_KEY, user.username);
+        sessionStorage.setItem(SESSION_CD_KEY, targetCdObj.id);
+
+        // Registra a trava de sessão única para esta máquina e sincroniza imediatamente
+        registerActiveUserSession(user, targetCdObj);
+        startSessionHeartbeats();
+        saveState();
+
+        const overlay = document.getElementById('loginOverlay');
+        if (overlay) overlay.classList.add('hidden');
+        renderAll();
+        showToast(`Bem-vindo(a), ${user.name} • Sessão travada nesta máquina (${targetCdObj.name})`, 'success');
+        return true;
+    } finally {
+        isLoginInProgress = false;
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Entrar no Sistema';
+        }
+    }
 }
 
 function hasTabPermission(tabId) {
@@ -3184,6 +3685,17 @@ function renderUsersModule() {
                 .join('');
 
             const isBlocked = u.status === 'BLOQUEADO';
+            cleanupExpiredSessions();
+            const uKey = String(u.username || '').toLowerCase();
+            const activeSess = (state.activeSessions || {})[uKey];
+            const isSelfSession = currentUser && String(currentUser.username || '').toLowerCase() === uKey && activeSess && activeSess.deviceId === getLocalDeviceId();
+            const sessionBadgeHtml = activeSess
+                ? `<div style="margin-top:4px; font-size:11px; color:#059669; font-weight:600;">
+                       🟢 ${isSelfSession ? 'Logado nesta máquina' : `Em uso: ${escapeHtml(activeSess.deviceLabel || activeSess.deviceId)}`}
+                       <div class="text-muted" style="font-size:10.5px;">${escapeHtml(activeSess.cdName || '')}</div>
+                   </div>`
+                : `<div class="text-muted" style="margin-top:4px; font-size:11px;">⚪ Offline (Livre)</div>`;
+
             return `
             <tr>
                 <td><span class="sku-code">${escapeHtml(u.username)}</span></td>
@@ -3204,10 +3716,16 @@ function renderUsersModule() {
                     <span class="badge ${isBlocked ? 'badge-zero' : 'badge-ok'}">
                         ${isBlocked ? 'Bloqueado' : 'Ativo'}
                     </span>
+                    ${sessionBadgeHtml}
                 </td>
                 <td class="text-right">
                     <div class="action-group">
                         <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Permissões / CDs</button>
+                        ${
+                            activeSess && !isSelfSession
+                                ? `<button class="btn btn-sm btn-outline" style="color:#d97706; border-color:#f59e0b;" onclick="forceDisconnectUserSession('${escapeHtml(u.username)}')" title="Encerrar sessão ativa em outra máquina">🔌 Derrubar Sessão</button>`
+                                : ''
+                        }
                         ${
                             !u.isMaster
                                 ? `<button class="btn btn-sm btn-outline" onclick="toggleUserBlock('${u.id}')">${isBlocked ? 'Desbloquear' : 'Bloquear'}</button>
@@ -3412,6 +3930,9 @@ function toggleUserBlock(userId) {
     const u = (state.users || []).find((item) => item.id === userId);
     if (!u || u.isMaster) return;
     u.status = u.status === 'BLOQUEADO' ? 'ATIVO' : 'BLOQUEADO';
+    if (u.status === 'BLOQUEADO') {
+        releaseActiveUserSession(u.username);
+    }
     saveState();
     renderAll();
     showToast(`Status do usuário ${u.username} alterado para ${u.status} e salvo permanentemente.`, 'success');
@@ -3422,6 +3943,7 @@ function deleteUser(userId) {
     const u = (state.users || []).find((item) => item.id === userId);
     if (!u || u.isMaster) return;
     if (!confirm(`Deseja realmente excluir o usuário "${u.username} - ${u.name}" de forma definitiva?`)) return;
+    releaseActiveUserSession(u.username);
     state.users = state.users.filter((item) => item.id !== userId);
     saveState();
     renderAll();
@@ -4106,23 +4628,33 @@ window.toggleUserBlock = toggleUserBlock;
 window.deleteUser = deleteUser;
 window.renameCdByMaster = renameCdByMaster;
 window.deleteCdByMaster = deleteCdByMaster;
+window.forceDisconnectUserSession = forceDisconnectUserSession;
 
 // Inicialização e Eventos
 document.addEventListener('DOMContentLoaded', () => {
     loadState();
 
-    // Restaura sessão logada (Usuário + CD travado) se existir e ainda estiver ativa
+    // Restaura sessão logada (Usuário + CD travado) se existir nesta aba e não estiver bloqueada em outra máquina
     const savedSessionUsername = sessionStorage.getItem(SESSION_USER_KEY);
     const savedSessionCdId = sessionStorage.getItem(SESSION_CD_KEY) || state.lastActiveCdId || 'cd-sp-01';
     if (savedSessionUsername) {
         const found = (state.users || []).find(
             (u) => u && String(u.username || '').toLowerCase() === savedSessionUsername.toLowerCase() && u.status === 'ATIVO'
         );
-        if (found && userHasCdAccess(found, savedSessionCdId)) {
+        const lockConflict = found ? getActiveSessionLockForUser(found.username) : null;
+        if (found && userHasCdAccess(found, savedSessionCdId) && (!lockConflict || !lockConflict.locked)) {
             switchActiveCdWorkspace(savedSessionCdId);
             currentUser = found;
             state.siteLeaderName = found.name;
+            const cdObj = (state.cds || []).find((c) => c.id === savedSessionCdId) || state.cds[0];
+            registerActiveUserSession(found, cdObj);
+            startSessionHeartbeats();
+            persistStateLocally();
             document.getElementById('loginOverlay').classList.add('hidden');
+        } else {
+            sessionStorage.removeItem(SESSION_USER_KEY);
+            sessionStorage.removeItem(SESSION_CD_KEY);
+            sessionStorage.removeItem(SESSION_TOKEN_KEY);
         }
     }
 
@@ -4131,27 +4663,50 @@ document.addEventListener('DOMContentLoaded', () => {
         pullStateFromSupabase(false);
     }
 
-    // Autenticação de Login, Senha e CD Operacional
-    document.getElementById('loginForm').addEventListener('submit', (e) => {
+    // Sincronização reativa entre janelas/abas locais
+    window.addEventListener('storage', (e) => {
+        if (e.key === STORAGE_KEY && e.newValue && currentUser) {
+            try {
+                const updated = decodeProtectedStorage(e.newValue);
+                if (updated && updated.sessionRevocations) {
+                    const uKey = String(currentUser.username || '').toLowerCase();
+                    const mySess = (state.activeSessions || {})[uKey];
+                    const myStart = mySess ? new Date(mySess.startedAt || 0).getTime() : 0;
+                    const revTime = Number(updated.sessionRevocations[uKey]) || 0;
+                    if (revTime > 0 && myStart > 0 && revTime >= myStart) {
+                        forceTerminateCurrentSession('🔒 Sessão encerrada em outro terminal.');
+                    }
+                }
+            } catch (err) {}
+        }
+    });
+
+    // Autenticação de Login, Senha e CD Operacional (com bloqueio de sessão simultânea)
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         const username = document.getElementById('loginUsername').value;
         const password = document.getElementById('loginPassword').value;
         const selectedCdId = document.getElementById('loginCdSelect').value;
-        performLogin(username, password, selectedCdId);
+        await performLogin(username, password, selectedCdId);
     });
 
-    // Logout / Trocar Usuário ou CD (limpa imediatamente dados sensíveis do DOM)
+    // Logout / Trocar Usuário ou CD (libera trava de sessão única para permitir login em outra máquina)
     document.getElementById('logoutBtn').addEventListener('click', () => {
-        saveState();
+        stopSessionHeartbeats();
+        if (currentUser) {
+            releaseActiveUserSession(currentUser.username);
+        }
         currentUser = null;
         sessionStorage.removeItem(SESSION_USER_KEY);
         sessionStorage.removeItem(SESSION_CD_KEY);
+        sessionStorage.removeItem(SESSION_TOKEN_KEY);
+        saveState();
         clearSensitiveDomWhenLocked();
         document.getElementById('loginForm').reset();
         populateLoginCdSelect();
         document.getElementById('loginErrorMsg').style.display = 'none';
         document.getElementById('loginOverlay').classList.remove('hidden');
-        showToast('Sessão encerrada e dados protegidos.', 'primary');
+        showToast('Sessão encerrada e usuário liberado para acesso em qualquer máquina.', 'primary');
     });
 
     // Cadastro de Novo CD pelo Master

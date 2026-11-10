@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=4.2">
+    <link rel="stylesheet" href="style.css?v=4.3">
 </head>
 <body>
     <!-- TELA DE LOGIN E CONTROLE DE ACESSO (RBAC) -->
@@ -51,7 +51,7 @@
                 <div id="loginErrorMsg" class="login-error" style="display:none">
                     Usuário ou senha incorretos, ou sem permissão para este CD.
                 </div>
-                <button type="submit" class="btn btn-primary w-full login-submit-btn">
+                <button type="submit" id="loginSubmitBtn" class="btn btn-primary w-full login-submit-btn">
                     Entrar no Sistema
                 </button>
             </form>
@@ -1647,7 +1647,7 @@
     <div id="toastContainer" class="toast-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js?v=4.2"></script>
-    <script src="estoque.js?v=4.2"></script>
+    <script src="supabase-config.js?v=4.3"></script>
+    <script src="estoque.js?v=4.3"></script>
 </body>
 </html>

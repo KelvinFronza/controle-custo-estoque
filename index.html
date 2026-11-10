@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=3.7">
+    <link rel="stylesheet" href="style.css?v=3.8">
 </head>
 <body>
     <!-- TELA DE LOGIN E CONTROLE DE ACESSO (RBAC) -->
@@ -86,7 +86,7 @@
         </div>
 
         <nav class="sidebar-nav">
-            <div class="nav-section-label">VISÃO MACRO DO CD</div>
+            <div class="nav-section-label" id="navMacroSectionLabel">VISÃO MACRO DO CD</div>
             <button class="nav-btn active" data-tab="dashboard">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
                 <span>Visão Macro &amp; Custos CD</span>
@@ -101,7 +101,7 @@
                 <span>Curva ABC &amp; CAPEX</span>
             </button>
 
-            <div class="nav-section-label">VISÃO MICRO • ESTOQUE</div>
+            <div class="nav-section-label" id="navMicroSectionLabel">VISÃO MICRO • ESTOQUE</div>
             <button class="nav-btn" data-tab="produtos">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
                 <span>Catálogo &amp; Posição (SKUs)</span>
@@ -117,7 +117,7 @@
                 <span class="nav-badge warning" id="navLoansBadge" style="display:none">0</span>
             </button>
 
-            <div class="nav-section-label">GOVERNANÇA &amp; DADOS</div>
+            <div class="nav-section-label" id="navGovSectionLabel">GOVERNANÇA &amp; DADOS</div>
             <button class="nav-btn" data-tab="handover">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                 <span>Passagem de Turno (S&amp;OP)</span>
@@ -1383,7 +1383,7 @@
     <div id="toastContainer" class="toast-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js?v=3.7"></script>
-    <script src="estoque.js?v=3.7"></script>
+    <script src="supabase-config.js?v=3.8"></script>
+    <script src="estoque.js?v=3.8"></script>
 </body>
 </html>

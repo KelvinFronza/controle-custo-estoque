@@ -475,6 +475,9 @@ function getInitialDemoData() {
     };
 }
 
+// Abas de Governança & Dados restritas exclusivamente ao Usuário Master
+const GOVERNANCE_MASTER_ONLY_TABS = ['handover', 'relatorios', 'usuarios'];
+
 // Matriz de Perfis e Usuários Iniciais (Kelvin Master + Líder + Operador)
 function getRolePresetPermissions(preset) {
     if (preset === 'MASTER') {
@@ -492,7 +495,7 @@ function getRolePresetPermissions(preset) {
     }
     if (preset === 'LIDER') {
         return {
-            tabs: ['dashboard', 'produtos', 'movimentacoes', 'cautelas', 'handover', 'relatorios'],
+            tabs: ['dashboard', 'produtos', 'movimentacoes', 'cautelas'],
             actions: {
                 viewFinancials: true,
                 manageProducts: true,
@@ -505,7 +508,7 @@ function getRolePresetPermissions(preset) {
     }
     if (preset === 'RH') {
         return {
-            tabs: ['dashboard', 'rh', 'cautelas', 'relatorios'],
+            tabs: ['dashboard', 'rh', 'cautelas'],
             actions: {
                 viewFinancials: true,
                 manageProducts: false,
@@ -591,6 +594,13 @@ function ensureUsersIntegrity() {
             exists.status = 'ATIVO';
             if (!exists.password) exists.password = 'admin123';
             exists.permissions = getRolePresetPermissions('MASTER');
+        }
+    });
+
+    // Garante que usuários não-Master não possuam as abas de Governança & Dados
+    state.users.forEach((u) => {
+        if (u && !u.isMaster && u.rolePreset !== 'MASTER' && u.permissions && Array.isArray(u.permissions.tabs)) {
+            u.permissions.tabs = u.permissions.tabs.filter((t) => !GOVERNANCE_MASTER_ONLY_TABS.includes(t));
         }
     });
 }
@@ -985,7 +995,11 @@ function performLogin(rawUsername, rawPassword) {
 
 function hasTabPermission(tabId) {
     if (!currentUser) return false;
-    if (currentUser.isMaster || currentUser.rolePreset === 'MASTER') return true;
+    const isMasterUser = Boolean(currentUser.isMaster || currentUser.rolePreset === 'MASTER');
+    if (GOVERNANCE_MASTER_ONLY_TABS.includes(tabId)) {
+        return isMasterUser;
+    }
+    if (isMasterUser) return true;
     const tabs = (currentUser.permissions && currentUser.permissions.tabs) || [];
     return tabs.includes(tabId);
 }
@@ -1019,6 +1033,23 @@ function applyUserPermissions() {
         btn.style.display = allowed ? 'flex' : 'none';
         if (allowed && !firstAllowedTab) firstAllowedTab = tabId;
     });
+
+    // Oculta os cabeçalhos das seções da Sidebar se o usuário não tiver acesso às abas daquela seção
+    const isMasterUser = Boolean(currentUser.isMaster || currentUser.rolePreset === 'MASTER');
+    const govSectionLabel = document.getElementById('navGovSectionLabel');
+    if (govSectionLabel) {
+        govSectionLabel.style.display = isMasterUser ? 'block' : 'none';
+    }
+    const macroSectionLabel = document.getElementById('navMacroSectionLabel');
+    if (macroSectionLabel) {
+        const hasMacro = ['dashboard', 'rh', 'analytics'].some((t) => hasTabPermission(t));
+        macroSectionLabel.style.display = hasMacro ? 'block' : 'none';
+    }
+    const microSectionLabel = document.getElementById('navMicroSectionLabel');
+    if (microSectionLabel) {
+        const hasMicro = ['produtos', 'movimentacoes', 'cautelas'].some((t) => hasTabPermission(t));
+        microSectionLabel.style.display = hasMicro ? 'block' : 'none';
+    }
 
     // Verifica se a aba ativa atual é permitida; se não, redireciona para a primeira permitida
     const activeBtn = document.querySelector('.nav-btn.active');
@@ -2063,7 +2094,18 @@ function renderUsersModule() {
         .join('');
 }
 
+function syncGovernanceMasterLockInModal(isMasterRole) {
+    ['permTabHandover', 'permTabRelatorios', 'permTabUsuarios'].forEach((chkId) => {
+        const chk = document.getElementById(chkId);
+        if (!chk) return;
+        chk.checked = Boolean(isMasterRole);
+        chk.disabled = !isMasterRole;
+    });
+}
+
 function applyUserPresetToModal(preset) {
+    const isMasterRole = preset === 'MASTER';
+    syncGovernanceMasterLockInModal(isMasterRole);
     if (preset === 'CUSTOM') return;
     const perms = getRolePresetPermissions(preset);
     const t = perms.tabs;
@@ -2075,9 +2117,9 @@ function applyUserPresetToModal(preset) {
     document.getElementById('permTabProdutos').checked = t.includes('produtos');
     document.getElementById('permTabMovimentacoes').checked = t.includes('movimentacoes');
     document.getElementById('permTabCautelas').checked = t.includes('cautelas');
-    document.getElementById('permTabHandover').checked = t.includes('handover');
-    document.getElementById('permTabRelatorios').checked = t.includes('relatorios');
-    document.getElementById('permTabUsuarios').checked = t.includes('usuarios');
+    document.getElementById('permTabHandover').checked = isMasterRole;
+    document.getElementById('permTabRelatorios').checked = isMasterRole;
+    document.getElementById('permTabUsuarios').checked = isMasterRole;
 
     document.getElementById('permActViewFinancials').checked = Boolean(a.viewFinancials);
     document.getElementById('permActManageProducts').checked = Boolean(a.manageProducts);
@@ -2138,9 +2180,7 @@ function openEditUserModal(userId) {
     document.getElementById('permTabProdutos').checked = t.includes('produtos');
     document.getElementById('permTabMovimentacoes').checked = t.includes('movimentacoes');
     document.getElementById('permTabCautelas').checked = t.includes('cautelas');
-    document.getElementById('permTabHandover').checked = t.includes('handover');
-    document.getElementById('permTabRelatorios').checked = t.includes('relatorios');
-    document.getElementById('permTabUsuarios').checked = t.includes('usuarios');
+    syncGovernanceMasterLockInModal(Boolean(u.isMaster || u.rolePreset === 'MASTER'));
 
     document.getElementById('permActViewFinancials').checked = Boolean(a.viewFinancials);
     document.getElementById('permActManageProducts').checked = Boolean(a.manageProducts);
@@ -2620,6 +2660,8 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const isMaster = rolePreset === 'MASTER' || username === 'kelvin';
+
         const tabs = [];
         if (document.getElementById('permTabDashboard').checked) tabs.push('dashboard');
         if (document.getElementById('permTabRh').checked) tabs.push('rh');
@@ -2627,9 +2669,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (document.getElementById('permTabProdutos').checked) tabs.push('produtos');
         if (document.getElementById('permTabMovimentacoes').checked) tabs.push('movimentacoes');
         if (document.getElementById('permTabCautelas').checked) tabs.push('cautelas');
-        if (document.getElementById('permTabHandover').checked) tabs.push('handover');
-        if (document.getElementById('permTabRelatorios').checked) tabs.push('relatorios');
-        if (document.getElementById('permTabUsuarios').checked) tabs.push('usuarios');
+        if (isMaster) {
+            tabs.push('handover', 'relatorios', 'usuarios');
+        }
 
         if (tabs.length === 0) {
             showToast('Selecione pelo menos 1 módulo/tela para o usuário acessar.', 'error');
@@ -2652,8 +2694,6 @@ document.addEventListener('DOMContentLoaded', () => {
             RH: 'Analista de RH',
             CUSTOM: 'Perfil Personalizado'
         };
-
-        const isMaster = rolePreset === 'MASTER' || username === 'kelvin';
 
         if (id) {
             const existing = state.users.find((u) => u.id === id);

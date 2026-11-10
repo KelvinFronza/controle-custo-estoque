@@ -16,10 +16,16 @@ let state = {
     loans: [],
     handovers: [],
     employees: [],
+    audits: [],
     users: [],
     cds: [],
     cdWorkspaces: {}
 };
+
+// Sessão de Auditoria Star em andamento
+let activeAuditSession = null;
+let activeAuditTimerInterval = null;
+let selectedAuditReportId = null;
 
 // Formatadores executivos
 const fmtCurrency = (val) =>
@@ -475,6 +481,7 @@ function getInitialDemoData() {
             }
         ],
         employees: getInitialEmployeesDemo(),
+        audits: [],
         users: getInitialUsersDemo()
     };
 }
@@ -486,7 +493,7 @@ const GOVERNANCE_MASTER_ONLY_TABS = ['handover', 'relatorios', 'usuarios'];
 function getRolePresetPermissions(preset) {
     if (preset === 'MASTER') {
         return {
-            tabs: ['dashboard', 'rh', 'analytics', 'produtos', 'movimentacoes', 'cautelas', 'handover', 'relatorios', 'usuarios'],
+            tabs: ['dashboard', 'rh', 'analytics', 'produtos', 'movimentacoes', 'cautelas', 'auditoria', 'handover', 'relatorios', 'usuarios'],
             actions: {
                 viewFinancials: true,
                 manageProducts: true,
@@ -499,7 +506,7 @@ function getRolePresetPermissions(preset) {
     }
     if (preset === 'LIDER') {
         return {
-            tabs: ['dashboard', 'produtos', 'movimentacoes', 'cautelas'],
+            tabs: ['dashboard', 'produtos', 'movimentacoes', 'cautelas', 'auditoria'],
             actions: {
                 viewFinancials: true,
                 manageProducts: true,
@@ -613,7 +620,8 @@ function ensureUsersIntegrity() {
                     movements: state.movements || [],
                     loans: state.loans || [],
                     handovers: state.handovers || [],
-                    employees: state.employees || []
+                    employees: state.employees || [],
+                    audits: state.audits || []
                 };
             } else {
                 state.cdWorkspaces[cd.id] = {
@@ -623,9 +631,12 @@ function ensureUsersIntegrity() {
                     movements: [],
                     loans: [],
                     handovers: [],
-                    employees: []
+                    employees: [],
+                    audits: []
                 };
             }
+        } else if (!Array.isArray(state.cdWorkspaces[cd.id].audits)) {
+            state.cdWorkspaces[cd.id].audits = [];
         }
     });
 
@@ -679,7 +690,8 @@ function syncCurrentCdToWorkspaces() {
         movements: Array.isArray(state.movements) ? state.movements : [],
         loans: Array.isArray(state.loans) ? state.loans : [],
         handovers: Array.isArray(state.handovers) ? state.handovers : [],
-        employees: Array.isArray(state.employees) ? state.employees : []
+        employees: Array.isArray(state.employees) ? state.employees : [],
+        audits: Array.isArray(state.audits) ? state.audits : []
     };
 }
 
@@ -697,7 +709,8 @@ function switchActiveCdWorkspace(targetCdId) {
             movements: [],
             loans: [],
             handovers: [],
-            employees: []
+            employees: [],
+            audits: []
         };
     }
 
@@ -709,6 +722,9 @@ function switchActiveCdWorkspace(targetCdId) {
     state.loans = Array.isArray(ws.loans) ? ws.loans : [];
     state.handovers = Array.isArray(ws.handovers) ? ws.handovers : [];
     state.employees = Array.isArray(ws.employees) ? ws.employees : [];
+    state.audits = Array.isArray(ws.audits) ? ws.audits : [];
+    activeAuditSession = null;
+    selectedAuditReportId = state.audits.length > 0 ? state.audits[0].id : null;
 }
 
 function populateLoginCdSelect() {
@@ -750,6 +766,7 @@ function loadState() {
                     Array.isArray(parsed.employees) && parsed.employees.length > 0
                         ? parsed.employees
                         : demo.employees,
+                audits: Array.isArray(parsed.audits) ? parsed.audits : [],
                 users:
                     Array.isArray(parsed.users) && parsed.users.length > 0
                         ? parsed.users
@@ -1212,7 +1229,7 @@ function applyUserPermissions() {
     }
     const microSectionLabel = document.getElementById('navMicroSectionLabel');
     if (microSectionLabel) {
-        const hasMicro = ['produtos', 'movimentacoes', 'cautelas'].some((t) => hasTabPermission(t));
+        const hasMicro = ['produtos', 'movimentacoes', 'cautelas', 'auditoria'].some((t) => hasTabPermission(t));
         microSectionLabel.style.display = hasMicro ? 'block' : 'none';
     }
 
@@ -1272,6 +1289,7 @@ function renderAll() {
     renderProductsTable();
     renderMovementsTable();
     renderLoansTable();
+    renderAuditModule();
     renderHandovers();
     renderUsersModule();
     updateSidebarBadges();
@@ -2129,6 +2147,565 @@ function renderLoansTable() {
         .join('');
 }
 
+// ============================================================================
+// TAB 8.5: CENTRAL DE AUDITORIA (START) & RELATÓRIO DE ACURACIDADE (IRA %)
+// ============================================================================
+
+function getStarRatingForIra(iraPct) {
+    if (iraPct >= 98) return { stars: '⭐⭐⭐⭐⭐', label: 'Excelência Operacional (Classe Mundial)', badge: 'badge-ok' };
+    if (iraPct >= 95) return { stars: '⭐⭐⭐⭐', label: 'Alta Confiabilidade', badge: 'badge-ok' };
+    if (iraPct >= 90) return { stars: '⭐⭐⭐', label: 'Atenção Moderada', badge: 'badge-low' };
+    if (iraPct >= 80) return { stars: '⭐⭐', label: 'Divergência Elevada', badge: 'badge-low' };
+    return { stars: '⭐', label: 'Crítico — Requer Recontagem Geral', badge: 'badge-zero' };
+}
+
+function renderAuditModule() {
+    const audits = Array.isArray(state.audits) ? state.audits : [];
+    const lastAudit = audits.length > 0 ? audits[0] : null;
+
+    const kpiSkuEl = document.getElementById('auditKpiSkuIra');
+    if (!kpiSkuEl) return;
+
+    if (lastAudit) {
+        const star = getStarRatingForIra(lastAudit.skuAccuracyPct);
+        kpiSkuEl.textContent = `${lastAudit.skuAccuracyPct.toFixed(1)}%`;
+        document.getElementById('auditKpiStarRating').textContent = `${star.stars} ${star.label}`;
+        document.getElementById('auditKpiVolIra').textContent = `${lastAudit.volumeAccuracyPct.toFixed(1)}%`;
+        document.getElementById('auditKpiVolSub').textContent = `${lastAudit.exactSkusCount} de ${lastAudit.totalSkusAudited} SKUs 100% exatos`;
+        document.getElementById('auditKpiFinIra').textContent = `${lastAudit.financialAccuracyPct.toFixed(1)}%`;
+        document.getElementById('auditKpiFinSub').textContent = `Divergência líquida: ${fmtCurrency(lastAudit.netVarianceValue)}`;
+        document.getElementById('auditKpiTotalRuns').textContent = audits.length;
+        document.getElementById('auditKpiLastRunDate').textContent = `Última: ${fmtDateTime(lastAudit.finishedAt)}`;
+        const navBadge = document.getElementById('navAuditIraBadge');
+        if (navBadge) navBadge.textContent = `${Math.round(lastAudit.skuAccuracyPct)}%`;
+    } else {
+        kpiSkuEl.textContent = '100.0%';
+        document.getElementById('auditKpiStarRating').textContent = '⭐⭐⭐⭐⭐ Pronto para Iniciar (START)';
+        document.getElementById('auditKpiVolIra').textContent = '100.0%';
+        document.getElementById('auditKpiVolSub').textContent = 'Clique em START Auditoria abaixo';
+        document.getElementById('auditKpiFinIra').textContent = '100.0%';
+        document.getElementById('auditKpiFinSub').textContent = 'Divergência líquida: R$ 0,00';
+        document.getElementById('auditKpiTotalRuns').textContent = '0';
+        document.getElementById('auditKpiLastRunDate').textContent = 'Nenhuma auditoria realizada ainda';
+        const navBadge = document.getElementById('navAuditIraBadge');
+        if (navBadge) navBadge.textContent = 'IRA';
+    }
+
+    // Controla exibição da sessão ativa vs. relatório
+    const activeCard = document.getElementById('auditActiveSessionCard');
+    if (activeCard) {
+        activeCard.style.display = activeAuditSession ? 'block' : 'none';
+    }
+
+    const reportCard = document.getElementById('auditResultReportCard');
+    if (reportCard) {
+        const reportToView = audits.find((a) => a.id === selectedAuditReportId) || lastAudit;
+        if (reportToView && !activeAuditSession) {
+            selectedAuditReportId = reportToView.id;
+            reportCard.style.display = 'block';
+            renderSelectedAuditReportCard(reportToView);
+        } else {
+            reportCard.style.display = 'none';
+        }
+    }
+
+    // Tabela de Histórico de Auditorias
+    const histBody = document.getElementById('auditHistoryTableBody');
+    if (!histBody) return;
+
+    if (audits.length === 0) {
+        histBody.innerHTML = `<tr><td colspan="9" class="empty-state">Nenhuma auditoria finalizada neste CD ainda. Clique no botão verde <strong>"▶ START AUDITORIA AGORA"</strong> acima para iniciar a contagem e gerar o Relatório de Acuracidade!</td></tr>`;
+        return;
+    }
+
+    histBody.innerHTML = audits
+        .map((a) => {
+            const star = getStarRatingForIra(a.skuAccuracyPct);
+            const isSelected = a.id === selectedAuditReportId;
+            return `
+            <tr style="${isSelected ? 'background:#f0fdf4;' : ''}">
+                <td>
+                    <span class="sku-code">#${escapeHtml(a.protocol)}</span>
+                    <div class="text-muted" style="font-size:11px;">${fmtDateTime(a.finishedAt)}</div>
+                </td>
+                <td>
+                    <strong>${escapeHtml(a.title)}</strong>
+                    <div class="text-muted" style="font-size:11px;">Escopo: ${escapeHtml(a.scopeLabel)} • Turno: ${escapeHtml(a.shift)}</div>
+                </td>
+                <td>${escapeHtml(a.auditorName)}</td>
+                <td><strong>${a.totalSkusAudited} SKUs</strong> (${a.exactSkusCount} exatos)</td>
+                <td><span class="badge ${star.badge}">${a.skuAccuracyPct.toFixed(1)}%</span></td>
+                <td><strong>${a.volumeAccuracyPct.toFixed(1)}%</strong></td>
+                <td><strong>${a.financialAccuracyPct.toFixed(1)}%</strong></td>
+                <td><span title="${escapeHtml(star.label)}">${star.stars}</span></td>
+                <td class="text-right">
+                    <div class="action-group">
+                        <button class="btn btn-sm btn-outline" onclick="viewAuditReport('${a.id}')">Ver na Tela</button>
+                        <button class="btn btn-sm btn-primary" onclick="exportAuditAccuracyExcel('${a.id}')">📊 Excel</button>
+                        <button class="btn btn-sm btn-outline" onclick="exportAuditAccuracyPdf('${a.id}')">📄 PDF</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+        })
+        .join('');
+}
+
+function renderSelectedAuditReportCard(audit) {
+    const star = getStarRatingForIra(audit.skuAccuracyPct);
+    document.getElementById('auditReportProtocolBadge').textContent = `RELATÓRIO OFICIAL DE ACURACIDADE • PROTOCOLO #${audit.protocol} • ${star.stars}`;
+    document.getElementById('auditReportTitle').textContent = `${audit.title} (${audit.scopeLabel})`;
+    document.getElementById('auditReportMeta').textContent = `Concluída em ${fmtDateTime(audit.finishedAt)} • Duração: ${audit.durationFormatted} • Auditor: ${audit.auditorName} • Unidade: ${audit.siteName}`;
+
+    const summaryGrid = document.getElementById('auditReportSummaryGrid');
+    summaryGrid.innerHTML = `
+        <div class="kpi-card" style="padding:12px;">
+            <span class="kpi-label">IRA por SKU (Itens Exatos)</span>
+            <h3 class="kpi-value" style="font-size:20px; color:#059669;">${audit.skuAccuracyPct.toFixed(1)}%</h3>
+            <span class="kpi-sub">${audit.exactSkusCount} exatos de ${audit.totalSkusAudited} SKUs</span>
+        </div>
+        <div class="kpi-card" style="padding:12px;">
+            <span class="kpi-label">Acuracidade de Volume</span>
+            <h3 class="kpi-value" style="font-size:20px; color:#2563eb;">${audit.volumeAccuracyPct.toFixed(1)}%</h3>
+            <span class="kpi-sub">Sist.: ${fmtNumber(audit.totalSystemUnits)} | Cont.: ${fmtNumber(audit.totalCountedUnits)}</span>
+        </div>
+        <div class="kpi-card" style="padding:12px;">
+            <span class="kpi-label">Acuracidade Financeira</span>
+            <h3 class="kpi-value" style="font-size:20px; color:#7c3aed;">${audit.financialAccuracyPct.toFixed(1)}%</h3>
+            <span class="kpi-sub">Valor auditado: ${fmtCurrency(audit.totalSystemValue)}</span>
+        </div>
+        <div class="kpi-card" style="padding:12px;">
+            <span class="kpi-label">Sobras vs. Faltas (Peças)</span>
+            <h3 class="kpi-value" style="font-size:18px;">+${audit.surplusUnits} / -${audit.shortageUnits}</h3>
+            <span class="kpi-sub">${audit.divergentSkusCount} SKUs com divergência</span>
+        </div>
+        <div class="kpi-card" style="padding:12px;">
+            <span class="kpi-label">Impacto Financeiro Líquido</span>
+            <h3 class="kpi-value" style="font-size:18px; color:${audit.netVarianceValue < 0 ? 'var(--danger)' : '#059669'};">${fmtCurrency(audit.netVarianceValue)}</h3>
+            <span class="kpi-sub">Classificação: ${star.stars}</span>
+        </div>
+    `;
+
+    const tbody = document.getElementById('auditReportItemsBody');
+    tbody.innerHTML = (audit.items || [])
+        .map((it) => {
+            const diffStr = it.diffQty > 0 ? `+${it.diffQty}` : `${it.diffQty}`;
+            const statusBadge =
+                it.diffQty === 0
+                    ? `<span class="badge badge-ok">✓ 100% Exato</span>`
+                    : it.diffQty > 0
+                    ? `<span class="badge badge-low">⚠️ Sobra (${diffStr})</span>`
+                    : `<span class="badge badge-zero">✕ Falta (${diffStr})</span>`;
+            return `
+            <tr>
+                <td><span class="sku-code">${escapeHtml(it.sku)}</span></td>
+                <td><strong>${escapeHtml(it.name)}</strong></td>
+                <td>${escapeHtml(it.location)}</td>
+                <td><span class="abc-pill abc-${it.abcClass}">${it.abcClass}</span></td>
+                <td>${fmtNumber(it.systemQty)} ${escapeHtml(it.unit)}</td>
+                <td><strong>${fmtNumber(it.countedQty)} ${escapeHtml(it.unit)}</strong></td>
+                <td style="font-weight:700; color:${it.diffQty === 0 ? '#059669' : it.diffQty < 0 ? '#dc2626' : '#d97706'};">
+                    ${diffStr} ${escapeHtml(it.unit)}
+                </td>
+                <td style="font-weight:600; color:${it.diffValue < 0 ? '#dc2626' : it.diffValue > 0 ? '#d97706' : '#059669'};">
+                    ${fmtCurrency(it.diffValue)}
+                </td>
+                <td>${statusBadge} (${it.itemAccuracyPct.toFixed(1)}%)</td>
+                <td>${escapeHtml(it.notes || 'Sem divergência')}</td>
+            </tr>
+        `;
+        })
+        .join('');
+}
+
+function startAuditSession() {
+    if (!requireActionPermission('auditStock', 'Iniciar Auditoria de Inventário')) return;
+    if (!state.products || state.products.length === 0) {
+        showToast('Cadastre ao menos um SKU no estoque antes de iniciar a auditoria.', 'error');
+        return;
+    }
+
+    const scope = document.getElementById('auditScopeSelect').value;
+    const blindMode = document.getElementById('auditBlindModeSelect').value === 'BLIND';
+    const title = document.getElementById('auditSessionTitleInput').value.trim() || 'Auditoria de Inventário do CD';
+    const { abcMap } = computeAbcAnalysis();
+
+    let targetProducts = [...state.products];
+    let scopeLabel = 'Inventário Geral (Todos os SKUs)';
+
+    if (scope === 'ABC_A') {
+        targetProducts = state.products.filter((p) => (abcMap[p.id] || 'C') === 'A');
+        scopeLabel = 'Curva ABC — Classe A';
+    } else if (scope === 'ABC_B') {
+        targetProducts = state.products.filter((p) => (abcMap[p.id] || 'C') === 'B');
+        scopeLabel = 'Curva ABC — Classe B';
+    } else if (scope === 'ABC_C') {
+        targetProducts = state.products.filter((p) => (abcMap[p.id] || 'C') === 'C');
+        scopeLabel = 'Curva ABC — Classe C';
+    } else if (scope === 'CRITICAL') {
+        targetProducts = state.products.filter((p) => getProductStatus(p).code !== 'OK');
+        scopeLabel = 'SKUs Críticos (Ponto de Pedido / Ruptura)';
+    }
+
+    if (targetProducts.length === 0) {
+        showToast('Nenhum SKU encontrado para o escopo selecionado. Escolha "Inventário Geral".', 'error');
+        return;
+    }
+
+    activeAuditSession = {
+        startedAt: Date.now(),
+        startedIso: new Date().toISOString(),
+        title,
+        scope,
+        scopeLabel,
+        blindMode,
+        items: targetProducts.map((p) => ({
+            productId: p.id,
+            sku: p.sku,
+            name: p.name,
+            category: p.category,
+            location: p.location,
+            unit: p.unit || 'UN',
+            abcClass: abcMap[p.id] || 'C',
+            unitPrice: Number(p.price) || 0,
+            systemQty: Number(p.quantity) || 0,
+            countedQty: Number(p.quantity) || 0,
+            notes: ''
+        }))
+    };
+
+    if (activeAuditTimerInterval) clearInterval(activeAuditTimerInterval);
+    activeAuditTimerInterval = setInterval(() => {
+        if (!activeAuditSession) return;
+        const elapsedSec = Math.floor((Date.now() - activeAuditSession.startedAt) / 1000);
+        const mins = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+        const secs = String(elapsedSec % 60).padStart(2, '0');
+        const timerEl = document.getElementById('auditActiveTimerDisplay');
+        if (timerEl) timerEl.textContent = `⏱️ ${mins}:${secs}`;
+    }, 1000);
+
+    renderActiveAuditSessionTable();
+    renderAuditModule();
+    showToast(`Auditoria iniciada (${targetProducts.length} SKUs)! Confira as quantidades e clique em Finalizar.`, 'success');
+}
+
+function renderActiveAuditSessionTable() {
+    if (!activeAuditSession) return;
+    document.getElementById('auditActiveTitleDisplay').textContent = `${activeAuditSession.title} — ${activeAuditSession.scopeLabel}`;
+    document.getElementById('auditActiveSubtitleDisplay').textContent = activeAuditSession.blindMode
+        ? 'Modo Contagem Cega ativo: digite a quantidade física contada de cada item.'
+        : 'Modo Conferência Assistida: valide ou altere a contagem física de cada SKU.';
+
+    const tbody = document.getElementById('auditActiveItemsTableBody');
+    tbody.innerHTML = activeAuditSession.items
+        .map((it, idx) => {
+            const sysDisplay = activeAuditSession.blindMode
+                ? `<span class="badge badge-low">🔒 Oculto (Cega)</span>`
+                : `<strong>${fmtNumber(it.systemQty)} ${escapeHtml(it.unit)}</strong>`;
+            return `
+            <tr id="auditRow_${idx}">
+                <td><span class="sku-code">${escapeHtml(it.sku)}</span></td>
+                <td><strong>${escapeHtml(it.name)}</strong></td>
+                <td>${escapeHtml(it.location)}</td>
+                <td><span class="abc-pill abc-${it.abcClass}">${it.abcClass}</span></td>
+                <td>${sysDisplay}</td>
+                <td>
+                    <input type="number" min="0" step="1" class="audit-count-input" data-idx="${idx}" value="${it.countedQty}"
+                        style="width:120px; padding:6px 10px; font-weight:700; border:2px solid #2563eb; border-radius:6px; font-size:13.5px;">
+                </td>
+                <td id="auditDiffCell_${idx}">0 ${escapeHtml(it.unit)}</td>
+                <td id="auditFinCell_${idx}">R$ 0,00</td>
+                <td id="auditStatusCell_${idx}"><span class="badge badge-ok">✓ 100% Exato</span></td>
+                <td>
+                    <input type="text" class="audit-note-input" data-idx="${idx}" value="${escapeHtml(it.notes)}"
+                        placeholder="Motivo se divergente..." style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:12px;">
+                </td>
+            </tr>
+        `;
+        })
+        .join('');
+
+    tbody.querySelectorAll('.audit-count-input').forEach((inp) => {
+        inp.addEventListener('input', (e) => {
+            const idx = Number(e.target.dataset.idx);
+            const val = Math.max(0, Number(e.target.value) || 0);
+            activeAuditSession.items[idx].countedQty = val;
+            updateActiveAuditLivePreview();
+        });
+    });
+
+    tbody.querySelectorAll('.audit-note-input').forEach((inp) => {
+        inp.addEventListener('input', (e) => {
+            const idx = Number(e.target.dataset.idx);
+            activeAuditSession.items[idx].notes = e.target.value;
+        });
+    });
+
+    updateActiveAuditLivePreview();
+}
+
+function updateActiveAuditLivePreview() {
+    if (!activeAuditSession) return;
+    let exactCount = 0;
+
+    activeAuditSession.items.forEach((it, idx) => {
+        const diff = it.countedQty - it.systemQty;
+        const diffVal = diff * it.unitPrice;
+        if (diff === 0) exactCount++;
+
+        const diffCell = document.getElementById(`auditDiffCell_${idx}`);
+        const finCell = document.getElementById(`auditFinCell_${idx}`);
+        const statusCell = document.getElementById(`auditStatusCell_${idx}`);
+
+        if (activeAuditSession.blindMode) {
+            if (diffCell) diffCell.innerHTML = `<span class="text-muted">Apurado ao finalizar</span>`;
+            if (finCell) finCell.innerHTML = `<span class="text-muted">-</span>`;
+            if (statusCell) statusCell.innerHTML = `<span class="badge badge-low">Contado: ${it.countedQty}</span>`;
+        } else {
+            const diffStr = diff > 0 ? `+${diff}` : `${diff}`;
+            if (diffCell) {
+                diffCell.textContent = `${diffStr} ${it.unit}`;
+                diffCell.style.color = diff === 0 ? '#059669' : diff < 0 ? '#dc2626' : '#d97706';
+                diffCell.style.fontWeight = '700';
+            }
+            if (finCell) {
+                finCell.textContent = fmtCurrency(diffVal);
+                finCell.style.color = diff === 0 ? '#059669' : diff < 0 ? '#dc2626' : '#d97706';
+            }
+            if (statusCell) {
+                statusCell.innerHTML =
+                    diff === 0
+                        ? `<span class="badge badge-ok">✓ 100% Exato</span>`
+                        : diff > 0
+                        ? `<span class="badge badge-low">⚠️ Sobra (${diffStr})</span>`
+                        : `<span class="badge badge-zero">✕ Falta (${diffStr})</span>`;
+            }
+        }
+    });
+
+    const liveIraEl = document.getElementById('auditLiveIraValue');
+    if (liveIraEl) {
+        if (activeAuditSession.blindMode) {
+            liveIraEl.textContent = 'Modo Cego 🔒';
+        } else {
+            const pct = (exactCount / Math.max(activeAuditSession.items.length, 1)) * 100;
+            liveIraEl.textContent = `${pct.toFixed(1)}%`;
+        }
+    }
+}
+
+function finishAuditSession() {
+    if (!activeAuditSession) return;
+
+    if (activeAuditTimerInterval) {
+        clearInterval(activeAuditTimerInterval);
+        activeAuditTimerInterval = null;
+    }
+
+    const elapsedSec = Math.max(1, Math.floor((Date.now() - activeAuditSession.startedAt) / 1000));
+    const durationFormatted = `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s`;
+    const autoAdjust = document.getElementById('auditAutoAdjustStockChk').checked;
+    const auditorName = currentUser ? currentUser.name : state.siteLeaderName || 'Kelvin';
+
+    let exactSkusCount = 0;
+    let divergentSkusCount = 0;
+    let totalSystemUnits = 0;
+    let totalCountedUnits = 0;
+    let totalAbsDiffUnits = 0;
+    let surplusUnits = 0;
+    let shortageUnits = 0;
+    let totalSystemValue = 0;
+    let totalAbsDiffValue = 0;
+    let netVarianceValue = 0;
+
+    const evaluatedItems = activeAuditSession.items.map((it) => {
+        const diffQty = it.countedQty - it.systemQty;
+        const diffValue = diffQty * it.unitPrice;
+        const absDiff = Math.abs(diffQty);
+        const itemBase = Math.max(it.systemQty, it.countedQty, 1);
+        const itemAccuracyPct = Math.max(0, (1 - absDiff / itemBase) * 100);
+
+        if (diffQty === 0) exactSkusCount++;
+        else divergentSkusCount++;
+
+        if (diffQty > 0) surplusUnits += diffQty;
+        if (diffQty < 0) shortageUnits += Math.abs(diffQty);
+
+        totalSystemUnits += it.systemQty;
+        totalCountedUnits += it.countedQty;
+        totalAbsDiffUnits += absDiff;
+        totalSystemValue += it.systemQty * it.unitPrice;
+        totalAbsDiffValue += Math.abs(diffValue);
+        netVarianceValue += diffValue;
+
+        if (autoAdjust && diffQty !== 0) {
+            const prod = state.products.find((p) => p.id === it.productId);
+            if (prod) {
+                prod.quantity = it.countedQty;
+                prod.updatedAt = new Date().toISOString();
+                state.movements.unshift({
+                    id: 'mov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                    date: new Date().toISOString(),
+                    type: 'ADJUST',
+                    productId: prod.id,
+                    sku: prod.sku,
+                    productName: prod.name,
+                    quantity: absDiff,
+                    unitPrice: prod.price,
+                    balanceAfter: it.countedQty,
+                    shift: state.activeShift,
+                    responsible: `${auditorName} (Auditoria IRA)`,
+                    reason: `Auditoria #${activeAuditSession.title} (Sist: ${it.systemQty} -> Contado: ${it.countedQty}) ${it.notes ? '- ' + it.notes : ''}`
+                });
+            }
+        }
+
+        return {
+            ...it,
+            diffQty,
+            diffValue,
+            itemAccuracyPct
+        };
+    });
+
+    const totalSkusAudited = evaluatedItems.length;
+    const skuAccuracyPct = totalSkusAudited > 0 ? (exactSkusCount / totalSkusAudited) * 100 : 100;
+    const volumeAccuracyPct =
+        totalSystemUnits > 0 ? Math.max(0, (1 - totalAbsDiffUnits / totalSystemUnits) * 100) : 100;
+    const financialAccuracyPct =
+        totalSystemValue > 0 ? Math.max(0, (1 - totalAbsDiffValue / totalSystemValue) * 100) : 100;
+
+    const protocol = 'IRA-' + Date.now().toString().slice(-5);
+    const auditRecord = {
+        id: 'aud_' + Date.now(),
+        protocol,
+        title: activeAuditSession.title,
+        scope: activeAuditSession.scope,
+        scopeLabel: activeAuditSession.scopeLabel,
+        siteName: state.siteName,
+        shift: state.activeShift,
+        auditorName,
+        startedAt: activeAuditSession.startedIso,
+        finishedAt: new Date().toISOString(),
+        durationFormatted,
+        totalSkusAudited,
+        exactSkusCount,
+        divergentSkusCount,
+        totalSystemUnits,
+        totalCountedUnits,
+        surplusUnits,
+        shortageUnits,
+        totalSystemValue,
+        netVarianceValue,
+        skuAccuracyPct,
+        volumeAccuracyPct,
+        financialAccuracyPct,
+        items: evaluatedItems
+    };
+
+    if (!Array.isArray(state.audits)) state.audits = [];
+    state.audits.unshift(auditRecord);
+    selectedAuditReportId = auditRecord.id;
+    activeAuditSession = null;
+
+    saveState();
+    renderAll();
+    showToast(`Auditoria #${protocol} concluída! Acuracidade (IRA): ${skuAccuracyPct.toFixed(1)}%`, 'success');
+}
+
+function cancelAuditSession() {
+    if (activeAuditTimerInterval) {
+        clearInterval(activeAuditTimerInterval);
+        activeAuditTimerInterval = null;
+    }
+    activeAuditSession = null;
+    renderAuditModule();
+    showToast('Sessão de auditoria cancelada.', 'primary');
+}
+
+function viewAuditReport(auditId) {
+    selectedAuditReportId = auditId;
+    renderAuditModule();
+    const card = document.getElementById('auditResultReportCard');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function buildSingleAuditExportPayload(audit) {
+    const star = getStarRatingForIra(audit.skuAccuracyPct);
+    const kpis = [
+        { label: 'Protocolo / Auditor', value: `#${audit.protocol} • ${audit.auditorName}` },
+        { label: 'IRA por SKU (%)', value: `${audit.skuAccuracyPct.toFixed(1)}% (${audit.exactSkusCount}/${audit.totalSkusAudited})` },
+        { label: 'Acuracidade Volume (%)', value: `${audit.volumeAccuracyPct.toFixed(1)}%` },
+        { label: 'Acuracidade Financeira (%)', value: `${audit.financialAccuracyPct.toFixed(1)}%` },
+        { label: 'Divergência Líquida / Nota', value: `${fmtCurrency(audit.netVarianceValue)} • ${star.stars}` }
+    ];
+    const headers = [
+        'SKU',
+        'Mercadoria',
+        'Endereço Logístico',
+        'Classe ABC',
+        'Saldo Sistêmico',
+        'Contagem Física',
+        'Divergência (Peças)',
+        'Impacto Financeiro (R$)',
+        'Acuracidade do SKU (%)',
+        'Status da Contagem',
+        'Apontamento / Observação'
+    ];
+    const rows = (audit.items || []).map((it) => [
+        it.sku,
+        it.name,
+        it.location,
+        `Classe ${it.abcClass}`,
+        `${it.systemQty} ${it.unit}`,
+        `${it.countedQty} ${it.unit}`,
+        it.diffQty > 0 ? `+${it.diffQty}` : `${it.diffQty}`,
+        fmtCurrency(it.diffValue),
+        `${it.itemAccuracyPct.toFixed(1)}%`,
+        it.diffQty === 0 ? '100% Exato' : it.diffQty > 0 ? 'Sobra Física' : 'Falta Física',
+        it.notes || 'Conferido OK'
+    ]);
+    return { kpis, headers, rows };
+}
+
+function exportAuditAccuracyExcel(auditId) {
+    const audits = state.audits || [];
+    const target = (auditId ? audits.find((a) => a.id === auditId) : null) || audits[0];
+    if (!target) {
+        showToast('Realize ao menos uma auditoria (START) para exportar o relatório de acuracidade.', 'error');
+        return;
+    }
+    const { kpis, headers, rows } = buildSingleAuditExportPayload(target);
+    downloadExcelReport(
+        `acuracidade_auditoria_${target.protocol.toLowerCase()}`,
+        `Relatório de Acuracidade de Inventário (${target.title} - #${target.protocol})`,
+        kpis,
+        headers,
+        rows
+    );
+    showToast(`Planilha Excel (.XLS) da Auditoria #${target.protocol} exportada!`, 'success');
+}
+
+function exportAuditAccuracyPdf(auditId) {
+    const audits = state.audits || [];
+    const target = (auditId ? audits.find((a) => a.id === auditId) : null) || audits[0];
+    if (!target) {
+        showToast('Realize ao menos uma auditoria (START) para gerar o PDF de acuracidade.', 'error');
+        return;
+    }
+    const { kpis, headers, rows } = buildSingleAuditExportPayload(target);
+    openExecutivePdfReport(
+        `Relatório de Acuracidade de Inventário (IRA) — #${target.protocol}`,
+        `${target.title} (${target.scopeLabel}) • Concluída em ${fmtDateTime(target.finishedAt)} • Duração: ${target.durationFormatted}`,
+        kpis,
+        headers,
+        rows
+    );
+}
+window.viewAuditReport = viewAuditReport;
+window.exportAuditAccuracyExcel = exportAuditAccuracyExcel;
+window.exportAuditAccuracyPdf = exportAuditAccuracyPdf;
+
 // TAB 7: PASSAGEM DE TURNO (SHIFT HANDOVER)
 function renderHandovers() {
     const list = document.getElementById('handoverHistoryList');
@@ -2208,6 +2785,7 @@ function renderUsersModule() {
         produtos: 'Estoque SKUs',
         movimentacoes: 'Kardex',
         cautelas: 'Cautelas',
+        auditoria: 'Auditoria IRA',
         handover: 'Passagem Turno',
         relatorios: 'CSV & Dados',
         usuarios: 'Master Admin'
@@ -2346,6 +2924,8 @@ function applyUserPresetToModal(preset) {
     document.getElementById('permTabProdutos').checked = t.includes('produtos');
     document.getElementById('permTabMovimentacoes').checked = t.includes('movimentacoes');
     document.getElementById('permTabCautelas').checked = t.includes('cautelas');
+    const audChk = document.getElementById('permTabAuditoria');
+    if (audChk) audChk.checked = t.includes('auditoria');
     document.getElementById('permTabHandover').checked = isMasterRole;
     document.getElementById('permTabRelatorios').checked = isMasterRole;
     document.getElementById('permTabUsuarios').checked = isMasterRole;
@@ -2413,6 +2993,8 @@ function openEditUserModal(userId) {
     document.getElementById('permTabProdutos').checked = t.includes('produtos');
     document.getElementById('permTabMovimentacoes').checked = t.includes('movimentacoes');
     document.getElementById('permTabCautelas').checked = t.includes('cautelas');
+    const audChk = document.getElementById('permTabAuditoria');
+    if (audChk) audChk.checked = isMasterRole || t.includes('auditoria');
     syncGovernanceMasterLockInModal(isMasterRole);
 
     document.getElementById('permActViewFinancials').checked = Boolean(a.viewFinancials);
@@ -3237,7 +3819,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (document.getElementById('permTabProdutos').checked) tabs.push('produtos');
         if (document.getElementById('permTabMovimentacoes').checked) tabs.push('movimentacoes');
         if (document.getElementById('permTabCautelas').checked) tabs.push('cautelas');
+        const permAudEl = document.getElementById('permTabAuditoria');
+        if (permAudEl && permAudEl.checked) tabs.push('auditoria');
         if (isMaster) {
+            if (!tabs.includes('auditoria')) tabs.push('auditoria');
             tabs.push('handover', 'relatorios', 'usuarios');
         }
 
@@ -3367,6 +3952,10 @@ document.addEventListener('DOMContentLoaded', () => {
             title: 'Gestão de Cautelas & Ativos Sob Responsabilidade',
             subtitle: 'Controle nominal de coletores, rádios e materiais críticos emprestados à operação'
         },
+        auditoria: {
+            title: 'Central de Auditoria de Inventário (START) & Relatório de Acuracidade (IRA %)',
+            subtitle: 'Inicie o ciclo de contagem física, apure divergências e emita o Relatório Executivo de Acuracidade (PDF & Excel)'
+        },
         handover: {
             title: 'Passagem de Turno (Shift Handover S&OP)',
             subtitle: 'Formalização de entrega de turno com checklist operacional e snapshot automático dos KPIs'
@@ -3422,7 +4011,36 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('newMovementFromTabBtn').addEventListener('click', () => openMovementModal(null, 'IN'));
     document.getElementById('quickLoanBtn').addEventListener('click', openLoanModal);
     document.getElementById('newLoanFromTabBtn').addEventListener('click', openLoanModal);
-    document.getElementById('quickAuditBtn').addEventListener('click', openAuditModal);
+    document.getElementById('quickAuditBtn').addEventListener('click', () => {
+        if (hasTabPermission('auditoria')) {
+            switchTab('auditoria');
+        } else {
+            openAuditModal();
+        }
+    });
+
+    // Botões da Central de Auditoria (START & Relatório de Acuracidade)
+    const startAudBtn = document.getElementById('startAuditSessionBtn');
+    if (startAudBtn) startAudBtn.addEventListener('click', startAuditSession);
+
+    const finishAudBtn = document.getElementById('finishAuditSessionBtn');
+    if (finishAudBtn) finishAudBtn.addEventListener('click', finishAuditSession);
+
+    const cancelAudBtn = document.getElementById('cancelAuditSessionBtn');
+    if (cancelAudBtn) cancelAudBtn.addEventListener('click', cancelAuditSession);
+
+    const singleAudBtn = document.getElementById('openSingleSkuAuditModalBtn');
+    if (singleAudBtn) singleAudBtn.addEventListener('click', openAuditModal);
+
+    const expCurrAudXlsBtn = document.getElementById('exportCurrentAuditExcelBtn');
+    if (expCurrAudXlsBtn) {
+        expCurrAudXlsBtn.addEventListener('click', () => exportAuditAccuracyExcel(selectedAuditReportId));
+    }
+
+    const expCurrAudPdfBtn = document.getElementById('exportCurrentAuditPdfBtn');
+    if (expCurrAudPdfBtn) {
+        expCurrAudPdfBtn.addEventListener('click', () => exportAuditAccuracyPdf(selectedAuditReportId));
+    }
 
     // Fechar Modais
     document.querySelectorAll('[data-close]').forEach((btn) => {
@@ -4186,6 +4804,16 @@ document.addEventListener('DOMContentLoaded', () => {
             rows
         );
     });
+
+    // 6. Relatório de Acuracidade de Inventário (Auditoria Star / IRA %) na Central de Dados
+    const expAuditsCsvBtn = document.getElementById('exportAuditsCsvBtn');
+    if (expAuditsCsvBtn) {
+        expAuditsCsvBtn.addEventListener('click', () => exportAuditAccuracyExcel(null));
+    }
+    const expAuditsPdfBtn = document.getElementById('exportAuditsPdfBtn');
+    if (expAuditsPdfBtn) {
+        expAuditsPdfBtn.addEventListener('click', () => exportAuditAccuracyPdf(null));
+    }
 
     // Planilha Modelo CSV
     document.getElementById('downloadCsvTemplateBtn').addEventListener('click', () => {

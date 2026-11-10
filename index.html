@@ -1,0 +1,1162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Controle de Custos e Estoque | Gestão Macro & Micro do CD</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo-badge">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="22" height="22">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>
+            </div>
+            <div>
+                <div class="brand-row">
+                    <h1 class="app-title">Controle de Custos <span class="brand-accent">&amp; Estoque</span></h1>
+                </div>
+                <span class="app-subtitle">Gestão Macro &amp; Micro do CD • ERP v3.0</span>
+            </div>
+        </div>
+
+        <div class="site-selector-card">
+            <div class="site-card-top">
+                <label for="siteNameInput">Centro de Distribuição (CD)</label>
+                <span class="sla-mini-pill" id="sidebarSlaBadge">SLA 100%</span>
+            </div>
+            <input type="text" id="siteNameInput" value="CD São Paulo - Site 01" placeholder="Nome do CD..." title="Clique para editar a unidade">
+            <div class="leader-input-row">
+                <span class="leader-label">Site Leader:</span>
+                <input type="text" id="siteLeaderNameInput" value="Kelvin" placeholder="Nome do Site Leader">
+            </div>
+            <div class="shift-indicator">
+                <span class="dot-live"></span>
+                <select id="activeShiftSelect" title="Turno Ativo na Operação">
+                    <option value="T1 - Manhã">Turno Ativo: T1 (06h-14h)</option>
+                    <option value="T2 - Tarde">Turno Ativo: T2 (14h-22h)</option>
+                    <option value="T3 - Noite">Turno Ativo: T3 (22h-06h)</option>
+                    <option value="ADM">Turno Ativo: ADM (08h-18h)</option>
+                </select>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section-label">VISÃO MACRO DO CD</div>
+            <button class="nav-btn active" data-tab="dashboard">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+                <span>Visão Macro &amp; Custos CD</span>
+            </button>
+            <button class="nav-btn" data-tab="rh">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <span>Controle de RH &amp; Turnover</span>
+                <span class="nav-badge info" id="navRhBadge">0</span>
+            </button>
+            <button class="nav-btn" data-tab="analytics">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                <span>Curva ABC &amp; CAPEX</span>
+            </button>
+
+            <div class="nav-section-label">VISÃO MICRO • ESTOQUE</div>
+            <button class="nav-btn" data-tab="produtos">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                <span>Catálogo &amp; Posição (SKUs)</span>
+                <span class="nav-badge" id="navLowStockBadge" style="display:none">0</span>
+            </button>
+            <button class="nav-btn" data-tab="movimentacoes">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                <span>Kardex / Movimentações</span>
+            </button>
+            <button class="nav-btn" data-tab="cautelas">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>
+                <span>Gestão de Cautelas</span>
+                <span class="nav-badge warning" id="navLoansBadge" style="display:none">0</span>
+            </button>
+
+            <div class="nav-section-label">GOVERNANÇA &amp; DADOS</div>
+            <button class="nav-btn" data-tab="handover">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <span>Passagem de Turno (S&amp;OP)</span>
+            </button>
+            <button class="nav-btn" data-tab="relatorios">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                <span>Central de Dados &amp; CSV</span>
+            </button>
+        </nav>
+
+        <div class="sidebar-footer">
+            <button class="btn btn-outline btn-sm w-full" id="printReportBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                Emitir Relatório Executivo
+            </button>
+            <div class="storage-status">
+                <span id="liveClockDisplay">--:--:--</span> • Salvo Localmente
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Executive Topbar -->
+        <header class="topbar">
+            <div class="topbar-title-block">
+                <div class="breadcrumb-row">
+                    <span class="breadcrumb-site" id="headerSiteBadge">CD São Paulo - Site 01</span>
+                    <span class="breadcrumb-sep">/</span>
+                    <span class="breadcrumb-shift" id="headerShiftBadge">T1 - Manhã</span>
+                    <span class="breadcrumb-sep">/</span>
+                    <span class="breadcrumb-app">Controle de Custos e Estoque</span>
+                </div>
+                <h2 id="pageTitle">Visão Macro &amp; Micro do Centro de Distribuição</h2>
+                <p id="pageSubtitle" class="text-muted">Consolidação executiva de custos operacionais, folha de RH, turnover, nível de serviço (SLA) e estoque</p>
+            </div>
+            <div class="topbar-actions">
+                <button class="btn btn-outline" id="quickAuditBtn" title="Realizar contagem física e conciliação de inventário">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    Auditoria Estoque
+                </button>
+                <button class="btn btn-outline" id="quickNewEmployeeBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                    + Colaborador (RH)
+                </button>
+                <button class="btn btn-secondary" id="quickMovementBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                    Movimentar Estoque
+                </button>
+                <button class="btn btn-secondary" id="quickLoanBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>
+                    Nova Cautela
+                </button>
+                <button class="btn btn-primary" id="quickNewProductBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    + SKU Estoque
+                </button>
+            </div>
+        </header>
+
+        <!-- TAB 1: EXECUTIVE DASHBOARD (MACRO & MICRO CD) -->
+        <section class="tab-panel active" id="tab-dashboard">
+            <!-- Macro CD Cost Consolidation Strip -->
+            <div class="macro-banner-grid">
+                <div class="macro-banner-card primary-gradient">
+                    <div class="macro-tag">VISÃO FINANCEIRA MACRO DO CD</div>
+                    <div class="macro-main-val" id="macroTotalCdCost">R$ 0,00</div>
+                    <div class="macro-sub-desc" id="macroTotalCdBreakdown">Estoque Imobilizado + Folha Mensal do CD</div>
+                </div>
+                <div class="macro-banner-card">
+                    <div class="macro-tag">FOLHA SALARIAL MENSAL (RH)</div>
+                    <div class="macro-main-val" id="macroPayrollCost">R$ 0,00</div>
+                    <div class="macro-sub-desc" id="macroPayrollSub">0 colaboradores ativos • Ticket médio R$ 0</div>
+                </div>
+                <div class="macro-banner-card">
+                    <div class="macro-tag">TAXA DE TURNOVER DO CD</div>
+                    <div class="macro-main-val" id="macroTurnoverRate">0,0%</div>
+                    <div class="macro-sub-desc" id="macroTurnoverSub">0 admissões • 0 desligamentos</div>
+                </div>
+                <div class="macro-banner-card">
+                    <div class="macro-tag">CUSTO POR UNIDADE EXPEDIDA</div>
+                    <div class="macro-main-val" id="macroCostPerUnit">R$ 0,00</div>
+                    <div class="macro-sub-desc" id="macroLossImpactSub">Perdas/Avarias acumuladas: R$ 0,00</div>
+                </div>
+            </div>
+
+            <!-- 5 Operational & Inventory KPI Cards -->
+            <div class="kpi-grid-5">
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Capital em Estoque (SKUs)</span>
+                        <div class="kpi-icon green">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="kpiTotalValue">R$ 0,00</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-trend neutral" id="kpiClassAShare">Classe A: 0% do valor</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Nível de Serviço (SLA Estoque)</span>
+                        <div class="kpi-icon blue">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="kpiSlaRate">100%</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-sub" id="kpiTotalSkus">0 SKUs • 0 unidades totais</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card" id="kpiCriticalCard">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Ruptura &amp; Risco Operacional</span>
+                        <div class="kpi-icon red">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="kpiCriticalCount">0</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-sub" id="kpiZeroStockCount">0 zerados • Reposição: R$ 0</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Ativos em Cautela (Equipe)</span>
+                        <div class="kpi-icon amber">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="kpiActiveLoans">0</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-sub" id="kpiOverdueLoans">0 em atraso • R$ 0 sob cautela</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Giro &amp; Perdas (Shrinkage)</span>
+                        <div class="kpi-icon purple">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="kpiLossValue">R$ 0,00</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-sub" id="kpiMovementsToday">0 mov. hoje • 0 avarias</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row 2: Visual Health + Shift Comparison + HR Cost by Sector -->
+            <div class="executive-3col-grid">
+                <!-- Donut Chart: Saúde do Estoque -->
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Saúde do Inventário (SKUs)</h3>
+                            <p class="text-muted">Índice de disponibilidade operacional do CD</p>
+                        </div>
+                    </div>
+                    <div class="donut-widget" id="stockHealthDonutContainer"></div>
+                </div>
+
+                <!-- Shift Activity & Headcount Comparison -->
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Desempenho &amp; Efetivo por Turno</h3>
+                            <p class="text-muted">Colaboradores alocados vs. Volume movimentado</p>
+                        </div>
+                    </div>
+                    <div id="shiftComparisonContainer" class="shift-bars-container"></div>
+                </div>
+
+                <!-- Custo de Pessoal (RH) + Estoque por Setor -->
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Custo de Folha por Setor do CD</h3>
+                            <p class="text-muted">Distribuição salarial e headcount operacional</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline" data-goto="rh">Abrir RH</button>
+                    </div>
+                    <div id="hrSectorBreakdownContainer" class="category-bars"></div>
+                </div>
+            </div>
+
+            <!-- Row 3: Priority Replenishment & Active Loans -->
+            <div class="dashboard-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Plano de Reposição Imediata (Itens Críticos &amp; Ruptura)</h3>
+                            <p class="text-muted">Cálculo automático de compra sugerida (Estoque Alvo = 2x Mínimo)</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline" data-goto="produtos">Catálogo Completo</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table compact">
+                            <thead>
+                                <tr>
+                                    <th>SKU / Mercadoria</th>
+                                    <th>Curva</th>
+                                    <th>Saldo / Mín.</th>
+                                    <th>Compra Sugerida</th>
+                                    <th>Status</th>
+                                    <th class="text-right">Ação</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboardAlertsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Monitor de Cautelas &amp; Ativos Críticos</h3>
+                            <p class="text-muted">Equipamentos e mercadorias em posse de colaboradores no turno</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline" data-goto="cautelas">Todas as Cautelas</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table compact">
+                            <thead>
+                                <tr>
+                                    <th>Colaborador / Setor</th>
+                                    <th>Ativo / Item</th>
+                                    <th>Prazo Limite</th>
+                                    <th>Status</th>
+                                    <th class="text-right">Baixa</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboardLoansBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row 4: Recent Kardex Audit Trail -->
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h3>Trilha de Auditoria Recente (Kardex Operacional)</h3>
+                        <p class="text-muted">Últimas transações registradas pelos líderes e operadores</p>
+                    </div>
+                    <button class="btn btn-sm btn-outline" data-goto="movimentacoes">Abrir Kardex Completo</button>
+                </div>
+                <div class="table-responsive">
+                    <table class="data-table compact">
+                        <thead>
+                            <tr>
+                                <th>Data/Hora</th>
+                                <th>Operação</th>
+                                <th>SKU / Mercadoria</th>
+                                <th>Qtd Mov.</th>
+                                <th>Impacto Fin.</th>
+                                <th>Saldo Final</th>
+                                <th>Turno / Responsável</th>
+                                <th>Documento / Justificativa</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dashboardMovementsBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 2: CONTROLE DE RH, FOLHA DE CUSTOS & TURNOVER DO SETOR -->
+        <section class="tab-panel" id="tab-rh">
+            <!-- KPIs de RH e Turnover -->
+            <div class="kpi-grid-5">
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Efetivo Ativo (Headcount)</span>
+                        <div class="kpi-icon blue">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="rhKpiActiveCount">0</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-sub" id="rhKpiTotalRegistered">0 cadastrados • 0 férias/afast.</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Taxa de Turnover Geral</span>
+                        <div class="kpi-icon red">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="rhKpiTurnoverRate">0,0%</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-sub" id="rhKpiTurnoverDetail">0 admissões (90d) • 0 desligamentos</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Folha Salarial Base (Ativos)</span>
+                        <div class="kpi-icon green">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="rhKpiBasePayroll">R$ 0,00</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-sub" id="rhKpiAvgSalary">Salário médio: R$ 0,00</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Custo Total RH (c/ Encargos)</span>
+                        <div class="kpi-icon purple">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="rhKpiTotalCost">R$ 0,00</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-sub" id="rhKpiCostPerActive">Custo médio total/colab: R$ 0,00</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Índice de Retenção / Presença</span>
+                        <div class="kpi-icon amber">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        </div>
+                    </div>
+                    <h3 class="kpi-value" id="rhKpiRetentionRate">100%</h3>
+                    <div class="kpi-footer">
+                        <span class="kpi-sub" id="rhKpiDismissedCount">0 desligados no histórico</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gráficos Gerenciais de RH: Custo por Setor & Turnover por Turno -->
+            <div class="dashboard-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Visão Macro: Orçamento de Folha &amp; Headcount por Setor</h3>
+                            <p class="text-muted">Análise de custo total (salário + encargos/benefícios) por área operacional do CD</p>
+                        </div>
+                    </div>
+                    <div id="rhSectorCostChart" class="category-bars"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Análise de Turnover &amp; Rotatividade por Turno</h3>
+                            <p class="text-muted">Ativos vs. Desligamentos e causas de saída na operação</p>
+                        </div>
+                    </div>
+                    <div id="rhTurnoverShiftChart" class="shift-bars-container"></div>
+                </div>
+            </div>
+
+            <!-- Visão Micro: Cadastro e Quadro Completo de Colaboradores -->
+            <div class="card">
+                <div class="filters-bar">
+                    <div class="search-box">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input type="text" id="rhSearchInput" placeholder="Buscar por nome, CPF, celular, matrícula ou cargo...">
+                    </div>
+                    <select id="rhSectorFilter">
+                        <option value="ALL">Todos os Setores</option>
+                        <option value="Recebimento">Recebimento</option>
+                        <option value="Picking">Picking (Separação)</option>
+                        <option value="Packing">Packing (Embalagem)</option>
+                        <option value="Expedição / Doca">Expedição / Doca</option>
+                        <option value="Inventário / Qualidade">Inventário / Qualidade</option>
+                        <option value="Liderança / Gestão">Liderança / Gestão</option>
+                    </select>
+                    <select id="rhShiftFilter">
+                        <option value="ALL">Todos os Turnos</option>
+                        <option value="T1 - Manhã">T1 - Manhã</option>
+                        <option value="T2 - Tarde">T2 - Tarde</option>
+                        <option value="T3 - Noite">T3 - Noite</option>
+                        <option value="ADM">ADM</option>
+                    </select>
+                    <select id="rhStatusFilter">
+                        <option value="ALL">Todos os Status</option>
+                        <option value="ATIVO">Somente Ativos</option>
+                        <option value="FERIAS">Em Férias / Afastados</option>
+                        <option value="DESLIGADO">Desligados (Turnover)</option>
+                    </select>
+                    <button class="btn btn-primary" id="newEmployeeFromTabBtn">+ Cadastrar Colaborador</button>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Matrícula</th>
+                                <th>Colaborador / Cargo</th>
+                                <th>CPF</th>
+                                <th>Celular / WhatsApp</th>
+                                <th>Setor &amp; Turno</th>
+                                <th>Admissão</th>
+                                <th>Salário Base</th>
+                                <th>Custo Total (Mês)</th>
+                                <th>Cautelas</th>
+                                <th>Status</th>
+                                <th class="text-right">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rhTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 3: CURVA ABC & CUSTOS (ANALYTICS GERENCIAL) -->
+        <section class="tab-panel" id="tab-analytics">
+            <div class="abc-summary-grid" id="abcSummaryCards"></div>
+
+            <div class="dashboard-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Matriz de Classificação ABC (Pareto Financeiro)</h3>
+                            <p class="text-muted">Ordenação decrescente pelo capital imobilizado e percentual acumulado</p>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table compact">
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>SKU / Produto</th>
+                                    <th>Saldo</th>
+                                    <th>Custo Unit.</th>
+                                    <th>Valor Total</th>
+                                    <th>% Part.</th>
+                                    <th>% Acum.</th>
+                                    <th>Classe ABC</th>
+                                </tr>
+                            </thead>
+                            <tbody id="abcTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Orçamento de Reposição &amp; Custos Globais (CAPEX / OPEX)</h3>
+                            <p class="text-muted">Projeção financeira para recompor estoque e visão consolidada de custos</p>
+                        </div>
+                    </div>
+                    <div id="capexProjectionBox" class="capex-box"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 4: CATÁLOGO DE PRODUTOS & POSIÇÃO -->
+        <section class="tab-panel" id="tab-produtos">
+            <div class="card">
+                <div class="filters-bar">
+                    <div class="search-box">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input type="text" id="productSearchInput" placeholder="Pesquisar por SKU, descrição, endereço logístico ou fornecedor...">
+                    </div>
+                    <select id="productCategoryFilter">
+                        <option value="ALL">Todas as Categorias</option>
+                    </select>
+                    <select id="productAbcFilter">
+                        <option value="ALL">Todas as Classes ABC</option>
+                        <option value="A">Classe A (Alto Valor - 80%)</option>
+                        <option value="B">Classe B (Valor Médio - 15%)</option>
+                        <option value="C">Classe C (Baixo Valor - 5%)</option>
+                    </select>
+                    <select id="productStatusFilter">
+                        <option value="ALL">Todos os Status</option>
+                        <option value="CRITICAL">Apenas Críticos (Baixo + Ruptura)</option>
+                        <option value="LOW">Ponto de Pedido (Baixo)</option>
+                        <option value="ZERO">Em Ruptura (Zerado)</option>
+                        <option value="OK">Estoque Saudável</option>
+                    </select>
+                    <select id="productSortSelect">
+                        <option value="value-desc">Ordenar: Maior Valor Total</option>
+                        <option value="stock-asc">Ordenar: Menor Saldo Primeiro</option>
+                        <option value="name-asc">Ordenar: Nome (A-Z)</option>
+                        <option value="updated-desc">Ordenar: Última Movimentação</option>
+                    </select>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>SKU</th>
+                                <th>Mercadoria / Especificação</th>
+                                <th>Curva</th>
+                                <th>Categoria</th>
+                                <th>Endereço / Posição</th>
+                                <th>Saldo Atual</th>
+                                <th>Mín / Alvo</th>
+                                <th>Nível</th>
+                                <th>Custo Unit.</th>
+                                <th>Valor Total</th>
+                                <th>Status</th>
+                                <th class="text-right">Operações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="productsTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 5: MOVIMENTAÇÕES (KARDEX) -->
+        <section class="tab-panel" id="tab-movimentacoes">
+            <div class="card">
+                <div class="filters-bar">
+                    <div class="search-box">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input type="text" id="movementSearchInput" placeholder="Filtrar Kardex por SKU, produto, responsável, NF ou justificativa...">
+                    </div>
+                    <select id="movementTypeFilter">
+                        <option value="ALL">Todas as Operações</option>
+                        <option value="IN">Entrada / Recebimento (+)</option>
+                        <option value="OUT">Saída / Expedição (-)</option>
+                        <option value="LOSS">Avaria / Perda / Sinistro (-)</option>
+                        <option value="ADJUST">Ajuste de Inventário (=)</option>
+                    </select>
+                    <select id="movementShiftFilter">
+                        <option value="ALL">Todos os Turnos</option>
+                        <option value="T1 - Manhã">T1 - Manhã</option>
+                        <option value="T2 - Tarde">T2 - Tarde</option>
+                        <option value="T3 - Noite">T3 - Noite</option>
+                        <option value="ADM">ADM</option>
+                    </select>
+                    <button class="btn btn-primary" id="newMovementFromTabBtn">+ Lançar Movimentação</button>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Data / Hora</th>
+                                <th>Operação</th>
+                                <th>SKU / Produto</th>
+                                <th>Qtd</th>
+                                <th>Impacto (R$)</th>
+                                <th>Saldo Após</th>
+                                <th>Turno</th>
+                                <th>Responsável</th>
+                                <th>Documento / NF / Motivo</th>
+                            </tr>
+                        </thead>
+                        <tbody id="movementsTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 6: EMPRÉSTIMOS / CAUTELAS -->
+        <section class="tab-panel" id="tab-cautelas">
+            <div class="card">
+                <div class="filters-bar">
+                    <div class="search-box">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input type="text" id="loanSearchInput" placeholder="Buscar por colaborador, matrícula, setor, patrimônio ou SKU...">
+                    </div>
+                    <select id="loanStatusFilter">
+                        <option value="ALL">Todos os Registros</option>
+                        <option value="ACTIVE">Em Aberto (Em Uso + Atrasados)</option>
+                        <option value="OVERDUE">Somente em Atraso Crítico</option>
+                        <option value="RETURNED">Histórico de Devolvidos</option>
+                    </select>
+                    <button class="btn btn-primary" id="newLoanFromTabBtn">+ Emitir Nova Cautela</button>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Colaborador</th>
+                                <th>Matrícula / Setor</th>
+                                <th>Ativo / Mercadoria</th>
+                                <th>Qtd</th>
+                                <th>Valor Resp.</th>
+                                <th>Retirada</th>
+                                <th>Limite Devolução</th>
+                                <th>Status</th>
+                                <th class="text-right">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="loansTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 7: PASSAGEM DE TURNO (SHIFT HANDOVER LOGBOOK) -->
+        <section class="tab-panel" id="tab-handover">
+            <div class="dashboard-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Registrar Passagem de Turno (Shift Handover)</h3>
+                            <p class="text-muted">Formalize a entrega do turno com fotografia automática dos KPIs de Estoque e RH</p>
+                        </div>
+                    </div>
+                    <form id="handoverForm" class="handover-form">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="hoFromShift">Turno que Entrega *</label>
+                                <select id="hoFromShift" required>
+                                    <option value="T1 - Manhã">T1 - Manhã</option>
+                                    <option value="T2 - Tarde">T2 - Tarde</option>
+                                    <option value="T3 - Noite">T3 - Noite</option>
+                                    <option value="ADM">ADM</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="hoToShift">Turno que Assume *</label>
+                                <select id="hoToShift" required>
+                                    <option value="T2 - Tarde">T2 - Tarde</option>
+                                    <option value="T3 - Noite">T3 - Noite</option>
+                                    <option value="T1 - Manhã">T1 - Manhã</option>
+                                    <option value="ADM">ADM</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="hoLeaderOut">Líder Entregando *</label>
+                                <input type="text" id="hoLeaderOut" required placeholder="Ex: Kelvin (Site Leader)">
+                            </div>
+                            <div class="form-group">
+                                <label for="hoLeaderIn">Líder Recebendo *</label>
+                                <input type="text" id="hoLeaderIn" required placeholder="Ex: Rodrigo (Líder T2)">
+                            </div>
+                            <div class="form-group span-2">
+                                <label>Checklist de Conformidade Operacional</label>
+                                <div class="checklist-grid">
+                                    <label class="check-item"><input type="checkbox" id="chkHighValue" checked> Gaiola de Alto Valor auditada</label>
+                                    <label class="check-item"><input type="checkbox" id="chkCollectors" checked> Coletores/Rádios conferidos</label>
+                                    <label class="check-item"><input type="checkbox" id="chkDocks" checked> Docas e Packing abastecidos</label>
+                                    <label class="check-item"><input type="checkbox" id="chkSafety" checked> Absenteísmo/Equipe conferida</label>
+                                </div>
+                            </div>
+                            <div class="form-group span-3">
+                                <label for="hoNotes">Ocorrências, Pendências Críticas e Orientações para o Próximo Turno *</label>
+                                <input type="text" id="hoNotes" required placeholder="Ex: Recebimento de etiquetas previsto às 15h30; cobrar devolução do Rádio HT da Patrícia...">
+                            </div>
+                        </div>
+                        <div class="modal-footer" style="margin-top:14px;">
+                            <button type="submit" class="btn btn-primary">Assinar &amp; Registrar Passagem de Turno</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Diário de Bordo de Passagens de Turno</h3>
+                            <p class="text-muted">Histórico auditável de entregas de turno com snapshot de indicadores</p>
+                        </div>
+                    </div>
+                    <div id="handoverHistoryList" class="handover-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 8: EXPORTAR & IMPORTAR -->
+        <section class="tab-panel" id="tab-relatorios">
+            <div class="reports-grid">
+                <div class="card">
+                    <h3>Exportação Gerencial (CSV / Microsoft Excel)</h3>
+                    <p class="text-muted">Arquivos formatados com UTF-8 BOM e separador ponto-e-vírgula, prontos para abrir diretamente no Excel com acentuação e casas decimais em padrão brasileiro.</p>
+                    <div class="report-buttons-list">
+                        <div class="report-action-item">
+                            <div>
+                                <strong>Quadro de Colaboradores, Salários &amp; Turnover (RH)</strong>
+                                <span>Matrícula, Nome, CPF, Celular, Cargo, Setor, Turno, Salário Base, Custo Total e Status.</span>
+                            </div>
+                            <button class="btn btn-primary" id="exportEmployeesCsvBtn">Exportar RH &amp; Custos (.CSV)</button>
+                        </div>
+                        <div class="report-action-item">
+                            <div>
+                                <strong>Posição Completa de Estoque + Curva ABC</strong>
+                                <span>SKUs, endereços, saldos, estoques mínimo/alvo, custo unitário, valor total e classificação ABC.</span>
+                            </div>
+                            <button class="btn btn-primary" id="exportProductsCsvBtn">Exportar Estoque (.CSV)</button>
+                        </div>
+                        <div class="report-action-item">
+                            <div>
+                                <strong>Plano de Compras &amp; Reposição Crítica</strong>
+                                <span>Itens em ruptura ou ponto de pedido com cálculo automático de compra sugerida e orçamento.</span>
+                            </div>
+                            <button class="btn btn-secondary" id="exportLowStockCsvBtn">Exportar Reposição (.CSV)</button>
+                        </div>
+                        <div class="report-action-item">
+                            <div>
+                                <strong>Kardex Completo de Movimentações por Turno</strong>
+                                <span>Entradas, saídas, avarias, impacto financeiro, responsáveis e documentos/NF.</span>
+                            </div>
+                            <button class="btn btn-secondary" id="exportMovementsCsvBtn">Exportar Kardex (.CSV)</button>
+                        </div>
+                        <div class="report-action-item">
+                            <div>
+                                <strong>Relatório de Cautelas &amp; Patrimônio</strong>
+                                <span>Histórico nominal de retiradas, prazos, atrasos e devoluções por colaborador.</span>
+                            </div>
+                            <button class="btn btn-secondary" id="exportLoansCsvBtn">Exportar Cautelas (.CSV)</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Importação em Lote, Backup &amp; Governança</h3>
+                    <p class="text-muted">Alimente o catálogo a partir de planilhas corporativas ou salve snapshots completos da operação.</p>
+                    
+                    <div class="import-box">
+                        <h4>1. Importação de Produtos em Lote via Planilha CSV</h4>
+                        <p class="text-muted">Formato: <code>SKU;Nome;Categoria;Localizacao;Unidade;Quantidade;EstoqueMinimo;PrecoUnitario</code></p>
+                        <div class="import-actions">
+                            <button class="btn btn-outline btn-sm" id="downloadCsvTemplateBtn">Baixar Planilha Modelo (.CSV)</button>
+                            <label class="btn btn-primary btn-sm file-label">
+                                Importar Arquivo CSV
+                                <input type="file" id="importCsvFileInput" accept=".csv,.txt" hidden>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="import-box">
+                        <h4>2. Snapshot Completo do Banco de Dados (JSON)</h4>
+                        <p class="text-muted">Inclui quadro de RH, folha salarial, catálogo de estoque, Kardex, cautelas e diário de turno.</p>
+                        <div class="import-actions">
+                            <button class="btn btn-secondary btn-sm" id="exportBackupJsonBtn">Exportar Snapshot (.JSON)</button>
+                            <label class="btn btn-outline btn-sm file-label">
+                                Restaurar Snapshot (.JSON)
+                                <input type="file" id="importBackupJsonInput" accept=".json" hidden>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="import-box danger-zone">
+                        <h4>3. Reset de Base Operacional</h4>
+                        <p class="text-muted">Restaure o cenário demonstrativo completo (Estoque + RH) ou zere os registros.</p>
+                        <div class="import-actions">
+                            <button class="btn btn-outline btn-sm" id="resetDemoDataBtn">Restaurar Cenário Demo</button>
+                            <button class="btn btn-danger btn-sm" id="clearAllDataBtn">Zerar Base de Dados</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- MODAL 1: CADASTRAR / EDITAR PRODUTO -->
+    <div class="modal-backdrop" id="productModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="productModalTitle">Cadastrar SKU / Mercadoria</h3>
+                <button class="modal-close" data-close="productModal">&times;</button>
+            </div>
+            <form id="productForm">
+                <input type="hidden" id="prodId">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="prodSku">Código SKU *</label>
+                        <input type="text" id="prodSku" required placeholder="Ex: MER-101">
+                    </div>
+                    <div class="form-group span-2">
+                        <label for="prodName">Descrição Técnica da Mercadoria *</label>
+                        <input type="text" id="prodName" required placeholder="Ex: Caixa Papelão Triplex 60x40x40cm">
+                    </div>
+                    <div class="form-group">
+                        <label for="prodCategory">Categoria Gerencial *</label>
+                        <input type="text" id="prodCategory" list="categorySuggestions" required placeholder="Ex: Mercadorias Gerais">
+                        <datalist id="categorySuggestions">
+                            <option value="Mercadorias Gerais">
+                            <option value="Insumos & Embalagens">
+                            <option value="Eletrônicos & Coletor">
+                            <option value="EPI & Segurança">
+                            <option value="Peças & Manutenção">
+                            <option value="Expedição & Logística">
+                        </datalist>
+                    </div>
+                    <div class="form-group">
+                        <label for="prodLocation">Endereço Logístico (Rua/Nível) *</label>
+                        <input type="text" id="prodLocation" required placeholder="Ex: Rua A-02 / Nível 01">
+                    </div>
+                    <div class="form-group">
+                        <label for="prodUnit">Unidade de Medida</label>
+                        <select id="prodUnit">
+                            <option value="UN">Unidade (UN)</option>
+                            <option value="CX">Caixa (CX)</option>
+                            <option value="PCT">Pacote (PCT)</option>
+                            <option value="RL">Rolo / Bobina (RL)</option>
+                            <option value="KG">Quilograma (KG)</option>
+                            <option value="KIT">Kit (KIT)</option>
+                            <option value="PAR">Par (PAR)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="prodQuantity">Saldo Físico Atual *</label>
+                        <input type="number" id="prodQuantity" min="0" step="1" required value="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="prodMinStock">Ponto de Pedido (Mínimo) *</label>
+                        <input type="number" id="prodMinStock" min="0" step="1" required value="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="prodPrice">Custo / Valor Unitário (R$) *</label>
+                        <input type="number" id="prodPrice" min="0" step="0.01" required value="0.00">
+                    </div>
+                    <div class="form-group span-3">
+                        <label for="prodNotes">Fornecedor Homologado / Lead Time / Observações</label>
+                        <input type="text" id="prodNotes" placeholder="Opcional: Fornecedor, SLA de entrega, lote ou código EAN...">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline" data-close="productModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Salvar SKU no Catálogo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 2: REGISTRAR MOVIMENTAÇÃO (KARDEX) -->
+    <div class="modal-backdrop" id="movementModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="movementModalTitle">Lançamento de Movimentação (Kardex)</h3>
+                <button class="modal-close" data-close="movementModal">&times;</button>
+            </div>
+            <form id="movementForm">
+                <div class="form-grid">
+                    <div class="form-group span-2">
+                        <label for="movProductSelect">SKU / Mercadoria *</label>
+                        <select id="movProductSelect" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="movType">Natureza da Operação *</label>
+                        <select id="movType" required>
+                            <option value="IN">Entrada / Recebimento NF (+)</option>
+                            <option value="OUT">Saída / Expedição / Consumo (-)</option>
+                            <option value="LOSS">Baixa por Avaria / Perda (-)</option>
+                            <option value="ADJUST">Ajuste de Inventário (= Novo Saldo)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="movQty" id="movQtyLabel">Quantidade *</label>
+                        <input type="number" id="movQty" min="1" step="1" required value="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="movShift">Turno Operacional *</label>
+                        <select id="movShift" required>
+                            <option value="T1 - Manhã">T1 - Manhã</option>
+                            <option value="T2 - Tarde">T2 - Tarde</option>
+                            <option value="T3 - Noite">T3 - Noite</option>
+                            <option value="ADM">ADM</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="movResponsible">Responsável / Conferente *</label>
+                        <input type="text" id="movResponsible" required placeholder="Nome do responsável">
+                    </div>
+                    <div class="form-group span-3">
+                        <label for="movReason">Documento (NF / Romaneio) ou Justificativa *</label>
+                        <input type="text" id="movReason" required placeholder="Ex: NF 98412 / Abastecimento Doca 02 / Romaneio #441">
+                    </div>
+                </div>
+                <div class="stock-preview-banner" id="movStockPreview">
+                    Saldo atual: <strong>0</strong> &rarr; Saldo projetado: <strong>0</strong>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline" data-close="movementModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Confirmar Lançamento</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 3: NOVA CAUTELA / EMPRÉSTIMO -->
+    <div class="modal-backdrop" id="loanModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Emissão de Cautela / Termo de Responsabilidade</h3>
+                <button class="modal-close" data-close="loanModal">&times;</button>
+            </div>
+            <form id="loanForm">
+                <div class="form-grid">
+                    <div class="form-group span-2">
+                        <label for="loanProductSelect">Ativo / Equipamento / Mercadoria *</label>
+                        <select id="loanProductSelect" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="loanQty">Quantidade *</label>
+                        <input type="number" id="loanQty" min="1" step="1" required value="1">
+                    </div>
+                    <div class="form-group span-3">
+                        <label for="loanEmployeeQuickSelect">Selecionar Colaborador Cadastrado no RH (Preenchimento Rápido)</label>
+                        <select id="loanEmployeeQuickSelect">
+                            <option value="">-- Ou digite manualmente abaixo --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="loanEmployeeName">Colaborador Responsável *</label>
+                        <input type="text" id="loanEmployeeName" required placeholder="Ex: Carlos Eduardo Silva">
+                    </div>
+                    <div class="form-group">
+                        <label for="loanEmployeeId">Matrícula / ID Funcional *</label>
+                        <input type="text" id="loanEmployeeId" required placeholder="Ex: MAT-4829">
+                    </div>
+                    <div class="form-group">
+                        <label for="loanDepartment">Área / Turno *</label>
+                        <input type="text" id="loanDepartment" required placeholder="Ex: Picking - T1">
+                    </div>
+                    <div class="form-group">
+                        <label for="loanDueDate">Prazo Limite de Devolução *</label>
+                        <input type="datetime-local" id="loanDueDate" required>
+                    </div>
+                    <div class="form-group span-2">
+                        <label for="loanNotes">Nº Série / Patrimônio / Estado Físico na Entrega</label>
+                        <input type="text" id="loanNotes" placeholder="Ex: Patrimônio #ZB-14, entregue com bateria 100% e capa protetora">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline" data-close="loanModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Emitir Cautela e Reservar Saldo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 4: AUDITORIA RÁPIDA DE INVENTÁRIO -->
+    <div class="modal-backdrop" id="auditModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Auditoria Cíclica de Inventário (Conciliação Física x Sistema)</h3>
+                <button class="modal-close" data-close="auditModal">&times;</button>
+            </div>
+            <form id="auditForm">
+                <div class="form-grid">
+                    <div class="form-group span-2">
+                        <label for="auditProductSelect">Selecione o SKU Auditado *</label>
+                        <select id="auditProductSelect" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="auditCountedQty">Contagem Física Apurada *</label>
+                        <input type="number" id="auditCountedQty" min="0" step="1" required value="0">
+                    </div>
+                    <div class="form-group span-3">
+                        <label for="auditNotes">Observação da Auditoria / Motivo da Divergência *</label>
+                        <input type="text" id="auditNotes" required placeholder="Ex: Contagem cíclica diária do Site Leader - Corredor A">
+                    </div>
+                </div>
+                <div class="stock-preview-banner" id="auditVariancePreview"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline" data-close="auditModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Aplicar Conciliação no Kardex</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 5: CADASTRAR / EDITAR COLABORADOR (RH & CUSTOS) -->
+    <div class="modal-backdrop" id="employeeModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="employeeModalTitle">Cadastrar Colaborador no Setor (RH &amp; Folha)</h3>
+                <button class="modal-close" data-close="employeeModal">&times;</button>
+            </div>
+            <form id="employeeForm">
+                <input type="hidden" id="empId">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="empCode">Matrícula / Crachá *</label>
+                        <input type="text" id="empCode" required placeholder="Ex: MAT-3092">
+                    </div>
+                    <div class="form-group span-2">
+                        <label for="empName">Nome Completo do Colaborador *</label>
+                        <input type="text" id="empName" required placeholder="Ex: Lucas Mendonça">
+                    </div>
+                    <div class="form-group">
+                        <label for="empCpf">CPF *</label>
+                        <input type="text" id="empCpf" required maxlength="14" placeholder="000.000.000-00">
+                    </div>
+                    <div class="form-group">
+                        <label for="empPhone">Celular / WhatsApp *</label>
+                        <input type="text" id="empPhone" required maxlength="15" placeholder="(11) 99999-0000">
+                    </div>
+                    <div class="form-group">
+                        <label for="empRole">Cargo / Função *</label>
+                        <input type="text" id="empRole" list="roleSuggestions" required placeholder="Ex: Operador Logístico I">
+                        <datalist id="roleSuggestions">
+                            <option value="Operador Logístico I">
+                            <option value="Operador Logístico II">
+                            <option value="Conferente de Carga">
+                            <option value="Operador de Empilhadeira">
+                            <option value="Analista de Inventário">
+                            <option value="Líder de Turno">
+                            <option value="Auxiliar de Expedição">
+                        </datalist>
+                    </div>
+                    <div class="form-group">
+                        <label for="empSector">Setor do CD *</label>
+                        <select id="empSector" required>
+                            <option value="Picking">Picking (Separação)</option>
+                            <option value="Packing">Packing (Embalagem)</option>
+                            <option value="Recebimento">Recebimento</option>
+                            <option value="Expedição / Doca">Expedição / Doca</option>
+                            <option value="Inventário / Qualidade">Inventário / Qualidade</option>
+                            <option value="Liderança / Gestão">Liderança / Gestão</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="empShift">Turno de Trabalho *</label>
+                        <select id="empShift" required>
+                            <option value="T1 - Manhã">T1 - Manhã</option>
+                            <option value="T2 - Tarde">T2 - Tarde</option>
+                            <option value="T3 - Noite">T3 - Noite</option>
+                            <option value="ADM">ADM</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="empHireDate">Data de Admissão *</label>
+                        <input type="date" id="empHireDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="empSalary">Salário Base Mensal (R$) *</label>
+                        <input type="number" id="empSalary" min="0" step="0.01" required value="2150.00">
+                    </div>
+                    <div class="form-group">
+                        <label for="empBenefits">Benefícios / Encargos (R$) *</label>
+                        <input type="number" id="empBenefits" min="0" step="0.01" required value="860.00" title="VT, VR, Saúde, FGTS/INSS mensal estimado">
+                    </div>
+                    <div class="form-group">
+                        <label for="empStatus">Status no Quadro *</label>
+                        <select id="empStatus" required>
+                            <option value="ATIVO">Ativo na Operação</option>
+                            <option value="FERIAS">Em Férias / Afastado</option>
+                            <option value="DESLIGADO">Desligado (Turnover)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="empDismissDateGroup" style="display:none">
+                        <label for="empDismissDate">Data de Desligamento</label>
+                        <input type="date" id="empDismissDate">
+                    </div>
+                    <div class="form-group span-2" id="empDismissReasonGroup" style="display:none">
+                        <label for="empDismissReason">Motivo do Desligamento (Análise de Turnover)</label>
+                        <select id="empDismissReason">
+                            <option value="Involuntário (Desempenho / Empresa)">Involuntário (Desempenho / Empresa)</option>
+                            <option value="Voluntário (Pedido de Demissão)">Voluntário (Pedido de Demissão)</option>
+                            <option value="Término de Contrato / Experiência">Término de Contrato / Experiência</option>
+                            <option value="Absenteísmo / Abandono">Absenteísmo / Abandono</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="stock-preview-banner" id="empCostPreview">
+                    Custo Total Mensal do Colaborador para o CD: <strong>R$ 3.010,00</strong>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline" data-close="employeeModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Salvar Colaborador no RH</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="estoque.js"></script>
+</body>
+</html>

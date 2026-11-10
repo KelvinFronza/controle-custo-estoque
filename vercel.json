@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "name": "controle-custos-estoque",
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/", "destination": "/index.html" }
+  ]
+}
+

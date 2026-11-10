@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=3.8">
+    <link rel="stylesheet" href="style.css?v=3.9">
 </head>
 <body>
     <!-- TELA DE LOGIN E CONTROLE DE ACESSO (RBAC) -->
@@ -29,6 +29,15 @@
 
             <form id="loginForm" class="login-form">
                 <div class="form-group">
+                    <label for="loginCdSelect">Centro de Distribuição (CD) Operacional *</label>
+                    <select id="loginCdSelect" required>
+                        <option value="cd-sp-01">CD São Paulo - Site 01</option>
+                        <option value="cd-cajamar-02">CD Cajamar - Site 02</option>
+                        <option value="cd-extrema-03">CD Extrema / MG - Site 03</option>
+                        <option value="cd-sul-04">CD Sul / Itajaí - Site 04</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="loginUsername">Usuário / Login de Acesso *</label>
                     <input type="text" id="loginUsername" required placeholder="Digite seu usuário..." autocomplete="username">
                 </div>
@@ -37,7 +46,7 @@
                     <input type="password" id="loginPassword" required placeholder="Digite sua senha..." autocomplete="current-password">
                 </div>
                 <div id="loginErrorMsg" class="login-error" style="display:none">
-                    Usuário ou senha incorretos, ou conta bloqueada pelo Master.
+                    Usuário ou senha incorretos, ou sem permissão para este CD.
                 </div>
                 <button type="submit" class="btn btn-primary w-full login-submit-btn">
                     Entrar no Sistema
@@ -66,13 +75,13 @@
 
         <div class="site-selector-card">
             <div class="site-card-top">
-                <label for="siteNameInput">Centro de Distribuição (CD)</label>
+                <label for="siteNameInput">🔒 CD Operacional (Travado)</label>
                 <span class="sla-mini-pill" id="sidebarSlaBadge">SLA 100%</span>
             </div>
-            <input type="text" id="siteNameInput" value="CD São Paulo - Site 01" placeholder="Nome do CD..." title="Clique para editar a unidade">
+            <input type="text" id="siteNameInput" value="CD São Paulo - Site 01" readonly disabled title="CD travado na sessão de login (Saia para trocar de CD)">
             <div class="leader-input-row">
-                <span class="leader-label">Site Leader:</span>
-                <input type="text" id="siteLeaderNameInput" value="Kelvin" placeholder="Nome do Site Leader">
+                <span class="leader-label">🔒 Usuário:</span>
+                <input type="text" id="siteLeaderNameInput" value="Kelvin" readonly disabled title="Usuário autenticado e travado na sessão">
             </div>
             <div class="shift-indicator">
                 <span class="dot-live"></span>
@@ -951,11 +960,25 @@
                 </div>
             </div>
 
+            <div class="card" style="margin-bottom: 18px;">
+                <div class="card-header">
+                    <div>
+                        <h3>Unidades / Centros de Distribuição (CDs) Cadastrados</h3>
+                        <p class="text-muted">Cada CD possui base de estoque, RH, Kardex e cautelas isolada para que uma operação não interfira na outra</p>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input type="text" id="newCdNameInput" placeholder="Ex: CD Recife - Site 05" style="padding:8px 12px; border:1px solid var(--border); border-radius:6px; font-size:13px; min-width:220px;">
+                        <button type="button" class="btn btn-outline" id="addNewCdBtn">+ Adicionar CD</button>
+                    </div>
+                </div>
+                <div id="registeredCdsList" class="perm-pill-list" style="padding-top:4px;"></div>
+            </div>
+
             <div class="card">
                 <div class="card-header">
                     <div>
-                        <h3>Controle de Usuários, Senhas e Matriz de Permissões (RBAC)</h3>
-                        <p class="text-muted">Como Usuário Master, defina exatamente quais telas e quais ações cada operador ou líder pode acessar</p>
+                        <h3>Controle de Usuários, Senhas, CDs e Matriz de Permissões (RBAC)</h3>
+                        <p class="text-muted">Como Usuário Master, defina exatamente em quais CDs, quais telas e quais ações cada operador ou líder pode operar</p>
                     </div>
                     <button class="btn btn-primary" id="newUserBtn">+ Cadastrar Usuário / Operador</button>
                 </div>
@@ -967,6 +990,7 @@
                                 <th>Login</th>
                                 <th>Nome do Usuário</th>
                                 <th>Perfil / Nível</th>
+                                <th>CDs Liberados</th>
                                 <th>Turno</th>
                                 <th>Módulos Liberados (Abas)</th>
                                 <th>Permissões de Ação</th>
@@ -1345,6 +1369,11 @@
                     </div>
 
                     <div class="form-group span-3">
+                        <label>0. Centros de Distribuição (CDs) onde este usuário tem permissão para operar:</label>
+                        <div class="checklist-grid" id="userAllowedCdsChecklist" style="grid-template-columns: repeat(2, 1fr);"></div>
+                    </div>
+
+                    <div class="form-group span-3">
                         <label>1. Módulos / Telas que este usuário pode acessar:</label>
                         <div class="checklist-grid" style="grid-template-columns: repeat(3, 1fr);">
                             <label class="check-item"><input type="checkbox" id="permTabDashboard" checked> Visão Macro &amp; Dashboard</label>
@@ -1383,7 +1412,7 @@
     <div id="toastContainer" class="toast-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js?v=3.8"></script>
-    <script src="estoque.js?v=3.8"></script>
+    <script src="supabase-config.js?v=3.9"></script>
+    <script src="estoque.js?v=3.9"></script>
 </body>
 </html>

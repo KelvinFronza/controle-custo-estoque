@@ -1,10 +1,12 @@
 const STORAGE_KEY = 'site_leader_inventory_v1';
 const SESSION_USER_KEY = 'cd_logged_user_v1';
+const SESSION_CD_KEY = 'cd_logged_site_v1';
 
-// Usuário autenticado na sessão atual
+// Usuário e CD autenticados e travados na sessão atual
 let currentUser = null;
+let currentCdId = 'cd-sp-01';
 
-// Estado global corporativo (Macro & Micro do CD)
+// Estado global corporativo (Macro & Micro do CD) com isolamento por CD
 let state = {
     siteName: 'CD São Paulo - Site 01',
     siteLeaderName: 'Kelvin',
@@ -14,7 +16,9 @@ let state = {
     loans: [],
     handovers: [],
     employees: [],
-    users: []
+    users: [],
+    cds: [],
+    cdWorkspaces: {}
 };
 
 // Formatadores executivos
@@ -533,6 +537,15 @@ function getRolePresetPermissions(preset) {
     };
 }
 
+function getDefaultCds() {
+    return [
+        { id: 'cd-sp-01', name: 'CD São Paulo - Site 01' },
+        { id: 'cd-cajamar-02', name: 'CD Cajamar - Site 02' },
+        { id: 'cd-extrema-03', name: 'CD Extrema / MG - Site 03' },
+        { id: 'cd-sul-04', name: 'CD Sul / Itajaí - Site 04' }
+    ];
+}
+
 function getInitialUsersDemo() {
     return [
         {
@@ -545,6 +558,7 @@ function getInitialUsersDemo() {
             isMaster: true,
             shift: 'Todos',
             status: 'ATIVO',
+            allowedCds: ['ALL'],
             permissions: getRolePresetPermissions('MASTER')
         },
         {
@@ -557,6 +571,7 @@ function getInitialUsersDemo() {
             isMaster: false,
             shift: 'T3 - Noite',
             status: 'ATIVO',
+            allowedCds: ['cd-sp-01'],
             permissions: getRolePresetPermissions('LIDER')
         },
         {
@@ -569,43 +584,154 @@ function getInitialUsersDemo() {
             isMaster: false,
             shift: 'T1 - Manhã',
             status: 'ATIVO',
+            allowedCds: ['cd-sp-01'],
             permissions: getRolePresetPermissions('OPERADOR')
         }
     ];
 }
 
-// Garante que a lista de usuários e a conta Master (kelvin) sempre existam mesmo após sincronizar dados antigos da nuvem
+// Garante que a lista de CDs, workspaces isolados por CD e a conta Master (kelvin) sempre existam
 function ensureUsersIntegrity() {
     const defaultUsers = getInitialUsersDemo();
     if (!state || typeof state !== 'object') return;
+
+    if (!Array.isArray(state.cds) || state.cds.length === 0) {
+        state.cds = getDefaultCds();
+    }
+    if (!state.cdWorkspaces || typeof state.cdWorkspaces !== 'object') {
+        state.cdWorkspaces = {};
+    }
+
+    // Garante que cada CD tenha seu próprio workspace isolado
+    state.cds.forEach((cd, idx) => {
+        if (!state.cdWorkspaces[cd.id]) {
+            if (idx === 0 && Array.isArray(state.products) && state.products.length > 0) {
+                state.cdWorkspaces[cd.id] = {
+                    siteName: cd.name,
+                    activeShift: state.activeShift || 'T1 - Manhã',
+                    products: state.products,
+                    movements: state.movements || [],
+                    loans: state.loans || [],
+                    handovers: state.handovers || [],
+                    employees: state.employees || []
+                };
+            } else {
+                state.cdWorkspaces[cd.id] = {
+                    siteName: cd.name,
+                    activeShift: 'T1 - Manhã',
+                    products: [],
+                    movements: [],
+                    loans: [],
+                    handovers: [],
+                    employees: []
+                };
+            }
+        }
+    });
+
     if (!Array.isArray(state.users) || state.users.length === 0) {
         state.users = defaultUsers;
-        return;
+    } else {
+        defaultUsers.forEach((defUser) => {
+            const exists = state.users.find(
+                (u) => u && u.username && u.username.toLowerCase() === defUser.username.toLowerCase()
+            );
+            if (!exists) {
+                state.users.push(defUser);
+            } else if (defUser.username === 'kelvin') {
+                exists.isMaster = true;
+                exists.rolePreset = 'MASTER';
+                exists.status = 'ATIVO';
+                exists.allowedCds = ['ALL'];
+                if (!exists.password) exists.password = 'admin123';
+                exists.permissions = getRolePresetPermissions('MASTER');
+            }
+        });
     }
-    defaultUsers.forEach((defUser) => {
-        const exists = state.users.find(
-            (u) => u && u.username && u.username.toLowerCase() === defUser.username.toLowerCase()
-        );
-        if (!exists) {
-            state.users.push(defUser);
-        } else if (defUser.username === 'kelvin') {
-            exists.isMaster = true;
-            exists.rolePreset = 'MASTER';
-            exists.status = 'ATIVO';
-            if (!exists.password) exists.password = 'admin123';
-            exists.permissions = getRolePresetPermissions('MASTER');
+
+    // Garante que usuários não-Master não possuam as abas de Governança & Dados e tenham allowedCds definido
+    state.users.forEach((u) => {
+        if (!u) return;
+        if (u.isMaster || u.rolePreset === 'MASTER') {
+            u.allowedCds = ['ALL'];
+        } else {
+            if (!Array.isArray(u.allowedCds) || u.allowedCds.length === 0) {
+                u.allowedCds = ['cd-sp-01'];
+            }
+            if (u.permissions && Array.isArray(u.permissions.tabs)) {
+                u.permissions.tabs = u.permissions.tabs.filter((t) => !GOVERNANCE_MASTER_ONLY_TABS.includes(t));
+            }
         }
     });
 
-    // Garante que usuários não-Master não possuam as abas de Governança & Dados
-    state.users.forEach((u) => {
-        if (u && !u.isMaster && u.rolePreset !== 'MASTER' && u.permissions && Array.isArray(u.permissions.tabs)) {
-            u.permissions.tabs = u.permissions.tabs.filter((t) => !GOVERNANCE_MASTER_ONLY_TABS.includes(t));
-        }
-    });
+    populateLoginCdSelect();
 }
 
-// Persistência local com migração automática da base de RH e Usuários
+function syncCurrentCdToWorkspaces() {
+    if (!state.cdWorkspaces || typeof state.cdWorkspaces !== 'object') {
+        state.cdWorkspaces = {};
+    }
+    const cdObj = (state.cds || []).find((c) => c.id === currentCdId);
+    state.cdWorkspaces[currentCdId] = {
+        siteName: cdObj ? cdObj.name : state.siteName,
+        activeShift: state.activeShift || 'T1 - Manhã',
+        products: Array.isArray(state.products) ? state.products : [],
+        movements: Array.isArray(state.movements) ? state.movements : [],
+        loans: Array.isArray(state.loans) ? state.loans : [],
+        handovers: Array.isArray(state.handovers) ? state.handovers : [],
+        employees: Array.isArray(state.employees) ? state.employees : []
+    };
+}
+
+function switchActiveCdWorkspace(targetCdId) {
+    ensureUsersIntegrity();
+    const validCd = (state.cds || []).find((c) => c.id === targetCdId) || state.cds[0];
+    if (!validCd) return;
+
+    currentCdId = validCd.id;
+    if (!state.cdWorkspaces[currentCdId]) {
+        state.cdWorkspaces[currentCdId] = {
+            siteName: validCd.name,
+            activeShift: 'T1 - Manhã',
+            products: [],
+            movements: [],
+            loans: [],
+            handovers: [],
+            employees: []
+        };
+    }
+
+    const ws = state.cdWorkspaces[currentCdId];
+    state.siteName = validCd.name;
+    state.activeShift = ws.activeShift || 'T1 - Manhã';
+    state.products = Array.isArray(ws.products) ? ws.products : [];
+    state.movements = Array.isArray(ws.movements) ? ws.movements : [];
+    state.loans = Array.isArray(ws.loans) ? ws.loans : [];
+    state.handovers = Array.isArray(ws.handovers) ? ws.handovers : [];
+    state.employees = Array.isArray(ws.employees) ? ws.employees : [];
+}
+
+function populateLoginCdSelect() {
+    const sel = document.getElementById('loginCdSelect');
+    if (!sel) return;
+    const cds = Array.isArray(state.cds) && state.cds.length > 0 ? state.cds : getDefaultCds();
+    const currentVal = sel.value;
+    sel.innerHTML = cds
+        .map((cd) => `<option value="${escapeHtml(cd.id)}">${escapeHtml(cd.name)}</option>`)
+        .join('');
+    if (cds.some((c) => c.id === currentVal)) {
+        sel.value = currentVal;
+    }
+}
+
+function userHasCdAccess(user, cdId) {
+    if (!user) return false;
+    if (user.isMaster || user.rolePreset === 'MASTER') return true;
+    const allowed = Array.isArray(user.allowedCds) ? user.allowedCds : ['cd-sp-01'];
+    return allowed.includes('ALL') || allowed.includes(cdId);
+}
+
+// Persistência local com migração automática da base de RH, CDs e Usuários
 function loadState() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
@@ -627,19 +753,31 @@ function loadState() {
                 users:
                     Array.isArray(parsed.users) && parsed.users.length > 0
                         ? parsed.users
-                        : demo.users
+                        : demo.users,
+                cds: Array.isArray(parsed.cds) && parsed.cds.length > 0 ? parsed.cds : getDefaultCds(),
+                cdWorkspaces:
+                    parsed.cdWorkspaces && typeof parsed.cdWorkspaces === 'object'
+                        ? parsed.cdWorkspaces
+                        : {}
             };
             ensureUsersIntegrity();
+            switchActiveCdWorkspace(currentCdId);
             saveState();
         } else {
             state = getInitialDemoData();
+            state.cds = getDefaultCds();
+            state.cdWorkspaces = {};
             ensureUsersIntegrity();
+            switchActiveCdWorkspace('cd-sp-01');
             saveState();
         }
     } catch (err) {
         console.error('Erro ao carregar estado:', err);
         state = getInitialDemoData();
+        state.cds = getDefaultCds();
+        state.cdWorkspaces = {};
         ensureUsersIntegrity();
+        switchActiveCdWorkspace('cd-sp-01');
     }
 }
 
@@ -784,15 +922,26 @@ async function pullStateFromSupabase(showNotification = false) {
         if (data && data.payload && Array.isArray(data.payload.products)) {
             const hadUsersInCloud = Array.isArray(data.payload.users) && data.payload.users.length > 0;
             const currentUsersBackup = state.users;
+            const currentCdsBackup = state.cds;
+            const currentWorkspacesBackup = state.cdWorkspaces;
             state = {
                 ...state,
                 ...data.payload,
-                users: hadUsersInCloud ? data.payload.users : currentUsersBackup
+                users: hadUsersInCloud ? data.payload.users : currentUsersBackup,
+                cds:
+                    Array.isArray(data.payload.cds) && data.payload.cds.length > 0
+                        ? data.payload.cds
+                        : currentCdsBackup,
+                cdWorkspaces:
+                    data.payload.cdWorkspaces && typeof data.payload.cdWorkspaces === 'object'
+                        ? data.payload.cdWorkspaces
+                        : currentWorkspacesBackup
             };
             ensureUsersIntegrity();
+            switchActiveCdWorkspace(currentCdId);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             renderAll();
-            if (!hadUsersInCloud) {
+            if (!hadUsersInCloud || !data.payload.cdWorkspaces) {
                 await pushStateToSupabase(false);
             }
             if (showNotification) {
@@ -812,6 +961,7 @@ async function pullStateFromSupabase(showNotification = false) {
 }
 
 function saveState() {
+    syncCurrentCdToWorkspaces();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (supabaseClient) {
         pushStateToSupabase(false);
@@ -954,10 +1104,12 @@ function getMovementTypeBadge(type) {
 // CONTROLE DE AUTENTICAÇÃO E PERMISSÕES (RBAC MASTER)
 // ============================================================================
 
-function performLogin(rawUsername, rawPassword) {
+function performLogin(rawUsername, rawPassword, rawCdId) {
     ensureUsersIntegrity();
     const username = String(rawUsername || '').trim().toLowerCase();
     const password = String(rawPassword || '').trim();
+    const cdSelectEl = document.getElementById('loginCdSelect');
+    const selectedCdId = rawCdId || (cdSelectEl ? cdSelectEl.value : 'cd-sp-01') || 'cd-sp-01';
     const errBox = document.getElementById('loginErrorMsg');
 
     const user = (state.users || []).find(
@@ -983,13 +1135,26 @@ function performLogin(rawUsername, rawPassword) {
         return false;
     }
 
+    const targetCdObj = (state.cds || []).find((c) => c.id === selectedCdId) || state.cds[0];
+    if (!userHasCdAccess(user, targetCdObj.id)) {
+        if (errBox) {
+            errBox.textContent = `Acesso bloqueado: seu usuário (${user.username}) não possui liberação do Master para operar no "${targetCdObj.name}".`;
+            errBox.style.display = 'block';
+        }
+        return false;
+    }
+
     if (errBox) errBox.style.display = 'none';
+    syncCurrentCdToWorkspaces();
+    switchActiveCdWorkspace(targetCdObj.id);
     currentUser = user;
+    state.siteLeaderName = user.name;
     sessionStorage.setItem(SESSION_USER_KEY, user.username);
+    sessionStorage.setItem(SESSION_CD_KEY, targetCdObj.id);
     const overlay = document.getElementById('loginOverlay');
     if (overlay) overlay.classList.add('hidden');
     renderAll();
-    showToast(`Bem-vindo(a), ${user.name}!`, 'success');
+    showToast(`Bem-vindo(a), ${user.name} • Operando em: ${targetCdObj.name}`, 'success');
     return true;
 }
 
@@ -1089,10 +1254,15 @@ function applyUserPermissions() {
 
 // Renderização Global
 function renderAll() {
+    const lockedUserDisplay = currentUser ? currentUser.name : state.siteLeaderName || 'Kelvin';
     document.getElementById('siteNameInput').value = state.siteName;
-    document.getElementById('siteLeaderNameInput').value = state.siteLeaderName || 'Kelvin';
+    document.getElementById('siteNameInput').readOnly = true;
+    document.getElementById('siteNameInput').disabled = true;
+    document.getElementById('siteLeaderNameInput').value = lockedUserDisplay;
+    document.getElementById('siteLeaderNameInput').readOnly = true;
+    document.getElementById('siteLeaderNameInput').disabled = true;
     document.getElementById('activeShiftSelect').value = state.activeShift;
-    document.getElementById('headerSiteBadge').textContent = state.siteName;
+    document.getElementById('headerSiteBadge').textContent = `🔒 ${state.siteName}`;
     document.getElementById('headerShiftBadge').textContent = state.activeShift;
 
     updateCategoryFilterOptions();
@@ -1999,6 +2169,7 @@ function renderHandovers() {
 // TAB 9: GESTÃO DE USUÁRIOS & PERMISSÕES (RBAC MASTER)
 function renderUsersModule() {
     const users = state.users || [];
+    const cds = state.cds || getDefaultCds();
     const masters = users.filter((u) => u.isMaster || u.rolePreset === 'MASTER');
     const active = users.filter((u) => u.status === 'ATIVO');
     const blocked = users.filter((u) => u.status === 'BLOQUEADO');
@@ -2009,6 +2180,26 @@ function renderUsersModule() {
     document.getElementById('usrKpiMasters').textContent = masters.length;
     document.getElementById('usrKpiActive').textContent = active.length;
     document.getElementById('usrKpiBlocked').textContent = blocked.length;
+
+    const cdsListEl = document.getElementById('registeredCdsList');
+    if (cdsListEl) {
+        cdsListEl.innerHTML = cds
+            .map((cd) => {
+                const ws = (state.cdWorkspaces && state.cdWorkspaces[cd.id]) || {};
+                const skuCount = cd.id === currentCdId ? state.products.length : (ws.products || []).length;
+                const empCount = cd.id === currentCdId ? state.employees.length : (ws.employees || []).length;
+                const isCurrent = cd.id === currentCdId;
+                return `<span class="perm-tag ${isCurrent ? 'action' : ''}" style="padding:6px 10px; font-size:12px;">
+                    🏢 <strong>${escapeHtml(cd.name)}</strong> (${skuCount} SKUs • ${empCount} Colab.)${isCurrent ? ' • [Ativo na sua sessão]' : ''}
+                </span>`;
+            })
+            .join('');
+    }
+
+    const cdNamesMap = {};
+    cds.forEach((c) => {
+        cdNamesMap[c.id] = c.name;
+    });
 
     const tabNamesMap = {
         dashboard: 'Dashboard',
@@ -2048,6 +2239,18 @@ function renderUsersModule() {
                   }
                 : (u.permissions && u.permissions.actions) || {};
 
+            const allowedCds = u.isMaster || (u.allowedCds && u.allowedCds.includes('ALL'))
+                ? ['ALL']
+                : Array.isArray(u.allowedCds) && u.allowedCds.length > 0
+                ? u.allowedCds
+                : ['cd-sp-01'];
+
+            const cdsHtml = allowedCds.includes('ALL')
+                ? `<span class="perm-tag action">👑 Todos os CDs (${cds.length})</span>`
+                : allowedCds
+                      .map((cdId) => `<span class="perm-tag">🏢 ${escapeHtml(cdNamesMap[cdId] || cdId)}</span>`)
+                      .join('');
+
             const tabsHtml = tabs
                 .map((t) => `<span class="perm-tag">${escapeHtml(tabNamesMap[t] || t)}</span>`)
                 .join('');
@@ -2069,6 +2272,7 @@ function renderUsersModule() {
                         ${u.isMaster ? '👑 MASTER' : escapeHtml(u.roleLabel || u.rolePreset)}
                     </span>
                 </td>
+                <td><div class="perm-pill-list">${cdsHtml}</div></td>
                 <td>${escapeHtml(u.shift || 'Todos')}</td>
                 <td><div class="perm-pill-list">${tabsHtml || '<span class="text-muted">Nenhuma</span>'}</div></td>
                 <td><div class="perm-pill-list">${actionsHtml || '<span class="text-muted">Somente Leitura</span>'}</div></td>
@@ -2079,7 +2283,7 @@ function renderUsersModule() {
                 </td>
                 <td class="text-right">
                     <div class="action-group">
-                        <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Permissões / Senha</button>
+                        <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Permissões / CDs</button>
                         ${
                             u.username !== 'kelvin'
                                 ? `<button class="btn btn-sm btn-outline" onclick="toggleUserBlock('${u.id}')">${isBlocked ? 'Desbloquear' : 'Bloquear'}</button>
@@ -2094,12 +2298,37 @@ function renderUsersModule() {
         .join('');
 }
 
+function renderCdsChecklistInModal(selectedCds = ['cd-sp-01'], isMasterRole = false) {
+    const container = document.getElementById('userAllowedCdsChecklist');
+    if (!container) return;
+    const cds = Array.isArray(state.cds) && state.cds.length > 0 ? state.cds : getDefaultCds();
+    const allSelected = isMasterRole || (Array.isArray(selectedCds) && selectedCds.includes('ALL'));
+
+    container.innerHTML = cds
+        .map((cd) => {
+            const isChecked = allSelected || (Array.isArray(selectedCds) && selectedCds.includes(cd.id));
+            return `<label class="check-item">
+                <input type="checkbox" class="perm-cd-checkbox" value="${escapeHtml(cd.id)}" ${isChecked ? 'checked' : ''} ${isMasterRole ? 'disabled' : ''}>
+                🏢 ${escapeHtml(cd.name)}
+            </label>`;
+        })
+        .join('');
+}
+
 function syncGovernanceMasterLockInModal(isMasterRole) {
     ['permTabHandover', 'permTabRelatorios', 'permTabUsuarios'].forEach((chkId) => {
         const chk = document.getElementById(chkId);
         if (!chk) return;
         chk.checked = Boolean(isMasterRole);
         chk.disabled = !isMasterRole;
+    });
+    document.querySelectorAll('.perm-cd-checkbox').forEach((chk) => {
+        if (isMasterRole) {
+            chk.checked = true;
+            chk.disabled = true;
+        } else {
+            chk.disabled = false;
+        }
     });
 }
 
@@ -2134,11 +2363,12 @@ function openNewUserModal() {
         showToast('Apenas o Usuário Master pode cadastrar ou alterar usuários.', 'error');
         return;
     }
-    document.getElementById('userModalTitle').textContent = 'Cadastrar Novo Usuário & Definir Permissões';
+    document.getElementById('userModalTitle').textContent = 'Cadastrar Novo Usuário & Definir CDs e Permissões';
     document.getElementById('userForm').reset();
     document.getElementById('usrId').value = '';
     document.getElementById('usrUsername').disabled = false;
     document.getElementById('usrRolePreset').value = 'OPERADOR';
+    renderCdsChecklistInModal([currentCdId], false);
     applyUserPresetToModal('OPERADOR');
     openModal('userModal');
 }
@@ -2151,7 +2381,8 @@ function openEditUserModal(userId) {
     const u = (state.users || []).find((item) => item.id === userId);
     if (!u) return;
 
-    document.getElementById('userModalTitle').textContent = `Configurar Permissões: ${u.name} (${u.username})`;
+    const isMasterRole = Boolean(u.isMaster || u.rolePreset === 'MASTER');
+    document.getElementById('userModalTitle').textContent = `Configurar CDs & Permissões: ${u.name} (${u.username})`;
     document.getElementById('usrId').value = u.id;
     document.getElementById('usrUsername').value = u.username;
     document.getElementById('usrPassword').value = u.password;
@@ -2160,10 +2391,12 @@ function openEditUserModal(userId) {
     document.getElementById('usrShift').value = u.shift || 'Todos';
     document.getElementById('usrStatus').value = u.status || 'ATIVO';
 
-    const t = u.isMaster
+    renderCdsChecklistInModal(u.allowedCds || ['cd-sp-01'], isMasterRole);
+
+    const t = isMasterRole
         ? ['dashboard', 'rh', 'analytics', 'produtos', 'movimentacoes', 'cautelas', 'handover', 'relatorios', 'usuarios']
         : (u.permissions && u.permissions.tabs) || [];
-    const a = u.isMaster
+    const a = isMasterRole
         ? {
               viewFinancials: true,
               manageProducts: true,
@@ -2180,7 +2413,7 @@ function openEditUserModal(userId) {
     document.getElementById('permTabProdutos').checked = t.includes('produtos');
     document.getElementById('permTabMovimentacoes').checked = t.includes('movimentacoes');
     document.getElementById('permTabCautelas').checked = t.includes('cautelas');
-    syncGovernanceMasterLockInModal(Boolean(u.isMaster || u.rolePreset === 'MASTER'));
+    syncGovernanceMasterLockInModal(isMasterRole);
 
     document.getElementById('permActViewFinancials').checked = Boolean(a.viewFinancials);
     document.getElementById('permActManageProducts').checked = Boolean(a.manageProducts);
@@ -2598,14 +2831,17 @@ function downloadCsv(filename, headers, rows) {
 document.addEventListener('DOMContentLoaded', () => {
     loadState();
 
-    //Restaura sessão logada se existir e ainda estiver ativa
+    // Restaura sessão logada (Usuário + CD travado) se existir e ainda estiver ativa
     const savedSessionUsername = sessionStorage.getItem(SESSION_USER_KEY);
+    const savedSessionCdId = sessionStorage.getItem(SESSION_CD_KEY) || 'cd-sp-01';
     if (savedSessionUsername) {
         const found = (state.users || []).find(
             (u) => u.username.toLowerCase() === savedSessionUsername.toLowerCase() && u.status === 'ATIVO'
         );
-        if (found) {
+        if (found && userHasCdAccess(found, savedSessionCdId)) {
+            switchActiveCdWorkspace(savedSessionCdId);
             currentUser = found;
+            state.siteLeaderName = found.name;
             document.getElementById('loginOverlay').classList.add('hidden');
         }
     }
@@ -2615,23 +2851,64 @@ document.addEventListener('DOMContentLoaded', () => {
         pullStateFromSupabase(false);
     }
 
-    // Autenticação de Login e Senha
+    // Autenticação de Login, Senha e CD Operacional
     document.getElementById('loginForm').addEventListener('submit', (e) => {
         e.preventDefault();
         const username = document.getElementById('loginUsername').value;
         const password = document.getElementById('loginPassword').value;
-        performLogin(username, password);
+        const selectedCdId = document.getElementById('loginCdSelect').value;
+        performLogin(username, password, selectedCdId);
     });
 
-    // Logout / Trocar Usuário
+    // Logout / Trocar Usuário ou CD
     document.getElementById('logoutBtn').addEventListener('click', () => {
+        saveState();
         currentUser = null;
         sessionStorage.removeItem(SESSION_USER_KEY);
+        sessionStorage.removeItem(SESSION_CD_KEY);
         document.getElementById('loginForm').reset();
+        populateLoginCdSelect();
         document.getElementById('loginErrorMsg').style.display = 'none';
         document.getElementById('loginOverlay').classList.remove('hidden');
         showToast('Sessão encerrada com segurança.', 'primary');
     });
+
+    // Cadastro de Novo CD pelo Master
+    const addNewCdBtn = document.getElementById('addNewCdBtn');
+    if (addNewCdBtn) {
+        addNewCdBtn.addEventListener('click', () => {
+            if (!currentUser || (!currentUser.isMaster && currentUser.rolePreset !== 'MASTER')) {
+                showToast('Apenas o Usuário Master pode cadastrar novos CDs.', 'error');
+                return;
+            }
+            const inp = document.getElementById('newCdNameInput');
+            const name = inp ? inp.value.trim() : '';
+            if (!name) {
+                showToast('Digite o nome do novo Centro de Distribuição (CD).', 'error');
+                return;
+            }
+            if ((state.cds || []).some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+                showToast('Este CD já está cadastrado.', 'error');
+                return;
+            }
+            const newId = 'cd-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Date.now().toString().slice(-3);
+            state.cds.push({ id: newId, name });
+            state.cdWorkspaces[newId] = {
+                siteName: name,
+                activeShift: 'T1 - Manhã',
+                products: [],
+                movements: [],
+                loans: [],
+                handovers: [],
+                employees: []
+            };
+            if (inp) inp.value = '';
+            populateLoginCdSelect();
+            saveState();
+            renderAll();
+            showToast(`Unidade "${name}" criada com base de dados isolada!`, 'success');
+        });
+    }
 
     // Eventos do Modal de Usuários & Permissões (Master)
     const newUserBtn = document.getElementById('newUserBtn');
@@ -2661,6 +2938,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const isMaster = rolePreset === 'MASTER' || username === 'kelvin';
+
+        const checkedCds = Array.from(document.querySelectorAll('.perm-cd-checkbox:checked')).map(
+            (chk) => chk.value
+        );
+        if (!isMaster && checkedCds.length === 0) {
+            showToast('Selecione pelo menos 1 Centro de Distribuição (CD) para este usuário operar.', 'error');
+            return;
+        }
+        const allowedCds = isMaster ? ['ALL'] : checkedCds;
 
         const tabs = [];
         if (document.getElementById('permTabDashboard').checked) tabs.push('dashboard');
@@ -2707,12 +2993,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     isMaster,
                     shift,
                     status: username === 'kelvin' ? 'ATIVO' : status,
+                    allowedCds,
                     permissions: { tabs, actions }
                 });
                 if (currentUser && currentUser.id === existing.id) {
                     currentUser = existing;
                 }
-                showToast(`Permissões do usuário ${username} atualizadas!`, 'success');
+                showToast(`Permissões e CDs do usuário ${username} atualizados!`, 'success');
             }
         } else {
             state.users.push({
@@ -2725,6 +3012,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 isMaster,
                 shift,
                 status,
+                allowedCds,
                 permissions: { tabs, actions }
             });
             showToast(`Usuário ${username} criado com sucesso!`, 'success');
@@ -2836,21 +3124,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => switchTab(btn.dataset.goto));
     });
 
-    // Inputs da Unidade, Site Leader e Turno
-    document.getElementById('siteNameInput').addEventListener('change', (e) => {
-        state.siteName = e.target.value.trim() || 'CD Principal';
-        saveState();
-        renderAll();
-        showToast('Unidade operacional atualizada!', 'success');
-    });
-
-    document.getElementById('siteLeaderNameInput').addEventListener('change', (e) => {
-        state.siteLeaderName = e.target.value.trim() || 'Site Leader';
-        saveState();
-        renderAll();
-        showToast(`Site Leader definido: ${state.siteLeaderName}`, 'success');
-    });
-
+    // Inputs da Unidade e Usuário agora são travados pela sessão de login
     document.getElementById('activeShiftSelect').addEventListener('change', (e) => {
         state.activeShift = e.target.value;
         saveState();

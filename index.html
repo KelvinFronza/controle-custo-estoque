@@ -98,7 +98,7 @@
                 Emitir Relatório Executivo
             </button>
             <div class="storage-status">
-                <span id="liveClockDisplay">--:--:--</span> • Salvo Localmente
+                <span id="liveClockDisplay">--:--:--</span> • <span id="supabaseSyncStatus">Modo Local</span>
             </div>
         </div>
     </aside>
@@ -801,11 +801,30 @@
                 </div>
 
                 <div class="card">
-                    <h3>Importação em Lote, Backup &amp; Governança</h3>
-                    <p class="text-muted">Alimente o catálogo a partir de planilhas corporativas ou salve snapshots completos da operação.</p>
+                    <h3>Conexão Supabase Cloud, Importação &amp; Backup</h3>
+                    <p class="text-muted">Conecte ao banco PostgreSQL do Supabase para compartilhar dados em tempo real na Vercel ou gerencie planilhas e snapshots.</p>
+
+                    <div class="import-box" style="border-color:#93c5fd; background:#eff6ff;">
+                        <h4>☁️ 1. Banco de Dados em Nuvem (Supabase PostgreSQL)</h4>
+                        <p class="text-muted">Cole a <strong>Project URL</strong> e a <strong>Anon Public Key</strong> do seu projeto Supabase (ou defina em <code>supabase-config.js</code>) após rodar o script <code>supabase_schema.sql</code>.</p>
+                        <div class="form-grid" style="margin-top:10px;">
+                            <div class="form-group">
+                                <label for="sbUrlInput">Supabase Project URL</label>
+                                <input type="url" id="sbUrlInput" placeholder="https://xxxx.supabase.co">
+                            </div>
+                            <div class="form-group span-2">
+                                <label for="sbKeyInput">Supabase Anon Public Key</label>
+                                <input type="password" id="sbKeyInput" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+                            </div>
+                        </div>
+                        <div class="import-actions">
+                            <button class="btn btn-primary btn-sm" id="saveSupabaseConfigBtn">Conectar &amp; Sincronizar Supabase</button>
+                            <button class="btn btn-outline btn-sm" id="pullSupabaseBtn">Baixar Dados da Nuvem</button>
+                        </div>
+                    </div>
                     
                     <div class="import-box">
-                        <h4>1. Importação de Produtos em Lote via Planilha CSV</h4>
+                        <h4>2. Importação de Produtos em Lote via Planilha CSV</h4>
                         <p class="text-muted">Formato: <code>SKU;Nome;Categoria;Localizacao;Unidade;Quantidade;EstoqueMinimo;PrecoUnitario</code></p>
                         <div class="import-actions">
                             <button class="btn btn-outline btn-sm" id="downloadCsvTemplateBtn">Baixar Planilha Modelo (.CSV)</button>
@@ -1157,6 +1176,8 @@
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="toast-container"></div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
     <script src="estoque.js"></script>
 </body>
 </html>

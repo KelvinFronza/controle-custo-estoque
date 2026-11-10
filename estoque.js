@@ -500,8 +500,168 @@ function loadState() {
     }
 }
 
+const SB_CONFIG_KEY = 'site_leader_supabase_config_v1';
+let supabaseClient = null;
+
+function getSupabaseCredentials() {
+    const saved = localStorage.getItem(SB_CONFIG_KEY);
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            if (parsed.url && parsed.anonKey) return parsed;
+        } catch (e) {}
+    }
+    if (window.SUPABASE_CONFIG && window.SUPABASE_CONFIG.url && window.SUPABASE_CONFIG.anonKey) {
+        return {
+            url: window.SUPABASE_CONFIG.url.trim(),
+            anonKey: window.SUPABASE_CONFIG.anonKey.trim()
+        };
+    }
+    return { url: '', anonKey: '' };
+}
+
+function initSupabaseClient() {
+    const creds = getSupabaseCredentials();
+    const statusEl = document.getElementById('supabaseSyncStatus');
+    const urlInput = document.getElementById('sbUrlInput');
+    const keyInput = document.getElementById('sbKeyInput');
+
+    if (urlInput && creds.url) urlInput.value = creds.url;
+    if (keyInput && creds.anonKey) keyInput.value = creds.anonKey;
+
+    if (creds.url && creds.anonKey && window.supabase) {
+        try {
+            supabaseClient = window.supabase.createClient(creds.url, creds.anonKey);
+            if (statusEl) {
+                statusEl.textContent = '☁️ Supabase Conectado';
+                statusEl.style.color = '#34d399';
+            }
+            return true;
+        } catch (err) {
+            console.error('Erro ao iniciar Supabase:', err);
+        }
+    }
+    supabaseClient = null;
+    if (statusEl) {
+        statusEl.textContent = 'Modo Local';
+        statusEl.style.color = '#64748b';
+    }
+    return false;
+}
+
+async function pushStateToSupabase(showNotification = false) {
+    if (!supabaseClient) return;
+    const statusEl = document.getElementById('supabaseSyncStatus');
+    if (statusEl) statusEl.textContent = '☁️ Sincronizando...';
+
+    try {
+        // 1. Salva o snapshot completo na tabela cd_app_state
+        const { error } = await supabaseClient.from('cd_app_state').upsert(
+            {
+                site_id: 'cd-principal',
+                site_name: state.siteName,
+                site_leader_name: state.siteLeaderName || 'Kelvin',
+                active_shift: state.activeShift,
+                payload: state,
+                updated_at: new Date().toISOString()
+            },
+            { onConflict: 'site_id' }
+        );
+
+        if (error) throw error;
+
+        // 2. Sincroniza também as tabelas relacionais de Produtos e RH (se criadas)
+        if (state.products && state.products.length > 0) {
+            const prodRows = state.products.map((p) => ({
+                id: String(p.id),
+                sku: p.sku,
+                name: p.name,
+                category: p.category,
+                location: p.location,
+                unit: p.unit || 'UN',
+                quantity: Number(p.quantity) || 0,
+                min_stock: Number(p.minStock) || 0,
+                price: Number(p.price) || 0,
+                notes: p.notes || '',
+                updated_at: p.updatedAt || new Date().toISOString()
+            }));
+            await supabaseClient.from('cd_products').upsert(prodRows, { onConflict: 'id' });
+        }
+
+        if (state.employees && state.employees.length > 0) {
+            const empRows = state.employees.map((e) => ({
+                id: String(e.id),
+                code: e.code,
+                name: e.name,
+                cpf: e.cpf || '',
+                phone: e.phone || '',
+                role: e.role || '',
+                sector: e.sector || '',
+                shift: e.shift || '',
+                hire_date: e.hireDate || null,
+                salary: Number(e.salary) || 0,
+                benefits: Number(e.benefits) || 0,
+                status: e.status || 'ATIVO',
+                dismiss_date: e.dismissDate || null,
+                dismiss_reason: e.dismissReason || ''
+            }));
+            await supabaseClient.from('cd_employees').upsert(empRows, { onConflict: 'id' });
+        }
+
+        if (statusEl) {
+            statusEl.textContent = '☁️ Supabase Sincronizado';
+            statusEl.style.color = '#34d399';
+        }
+        if (showNotification) {
+            showToast('Dados sincronizados com sucesso no Supabase!', 'success');
+        }
+    } catch (err) {
+        console.error('Erro ao sincronizar Supabase:', err);
+        if (statusEl) {
+            statusEl.textContent = '⚠️ Erro Supabase';
+            statusEl.style.color = '#f87171';
+        }
+        if (showNotification) {
+            showToast(`Erro no Supabase: ${err.message || 'Verifique se rodou o supabase_schema.sql'}`, 'error');
+        }
+    }
+}
+
+async function pullStateFromSupabase(showNotification = false) {
+    if (!supabaseClient) return;
+    try {
+        const { data, error } = await supabaseClient
+            .from('cd_app_state')
+            .select('*')
+            .eq('site_id', 'cd-principal')
+            .maybeSingle();
+
+        if (error) throw error;
+
+        if (data && data.payload && Array.isArray(data.payload.products)) {
+            state = data.payload;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            renderAll();
+            if (showNotification) {
+                showToast('Dados baixados do Supabase com sucesso!', 'success');
+            }
+        } else {
+            // Primeiro acesso na nuvem: envia o estado atual para inicializar o banco
+            await pushStateToSupabase(showNotification);
+        }
+    } catch (err) {
+        console.error('Erro ao buscar dados do Supabase:', err);
+        if (showNotification) {
+            showToast(`Erro ao ler Supabase: ${err.message}`, 'error');
+        }
+    }
+}
+
 function saveState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (supabaseClient) {
+        pushStateToSupabase(false);
+    }
 }
 
 // Toast corporativo
@@ -1920,6 +2080,36 @@ function downloadCsv(filename, headers, rows) {
 document.addEventListener('DOMContentLoaded', () => {
     loadState();
     renderAll();
+    if (initSupabaseClient()) {
+        pullStateFromSupabase(false);
+    }
+
+    const saveSbBtn = document.getElementById('saveSupabaseConfigBtn');
+    if (saveSbBtn) {
+        saveSbBtn.addEventListener('click', async () => {
+            const url = document.getElementById('sbUrlInput').value.trim();
+            const anonKey = document.getElementById('sbKeyInput').value.trim();
+            if (!url || !anonKey) {
+                showToast('Informe a Project URL e a Anon Key do Supabase.', 'error');
+                return;
+            }
+            localStorage.setItem(SB_CONFIG_KEY, JSON.stringify({ url, anonKey }));
+            if (initSupabaseClient()) {
+                await pushStateToSupabase(true);
+            }
+        });
+    }
+
+    const pullSbBtn = document.getElementById('pullSupabaseBtn');
+    if (pullSbBtn) {
+        pullSbBtn.addEventListener('click', async () => {
+            if (!supabaseClient && !initSupabaseClient()) {
+                showToast('Configure a URL e a Anon Key do Supabase primeiro.', 'error');
+                return;
+            }
+            await pullStateFromSupabase(true);
+        });
+    }
 
     // Relógio em Tempo Real na Sidebar
     const updateClock = () => {

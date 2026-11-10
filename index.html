@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=3.9">
+    <link rel="stylesheet" href="style.css?v=4.0">
 </head>
 <body>
     <!-- TELA DE LOGIN E CONTROLE DE ACESSO (RBAC) -->
@@ -815,43 +815,58 @@
         <section class="tab-panel" id="tab-relatorios">
             <div class="reports-grid">
                 <div class="card">
-                    <h3>Exportação Gerencial (CSV / Microsoft Excel)</h3>
-                    <p class="text-muted">Arquivos formatados com UTF-8 BOM e separador ponto-e-vírgula, prontos para abrir diretamente no Excel com acentuação e casas decimais em padrão brasileiro.</p>
+                    <h3>Central de Relatórios Executivos (PDF &amp; Microsoft Excel)</h3>
+                    <p class="text-muted">Extraia relatórios gerenciais completos do CD atual tanto em planilha formatada para <strong>Microsoft Excel (.XLS / .CSV)</strong> quanto em documento executivo <strong>PDF</strong> pronto para impressão ou envio à diretoria.</p>
                     <div class="report-buttons-list">
                         <div class="report-action-item">
                             <div>
-                                <strong>Quadro de Colaboradores, Salários &amp; Turnover (RH)</strong>
-                                <span>Matrícula, Nome, CPF, Celular, Cargo, Setor, Turno, Salário Base, Custo Total e Status.</span>
+                                <strong>1. Quadro de Colaboradores, Salários &amp; Turnover (RH)</strong>
+                                <span>Matrícula, Nome, CPF, Celular, Cargo, Setor, Turno, Salário Base, Encargos, Custo Total, Status e KPIs de Turnover.</span>
                             </div>
-                            <button class="btn btn-primary" id="exportEmployeesCsvBtn">Exportar RH &amp; Custos (.CSV)</button>
+                            <div class="action-group" style="flex-shrink:0;">
+                                <button class="btn btn-primary btn-sm" id="exportEmployeesCsvBtn">📊 Excel (.XLS)</button>
+                                <button class="btn btn-outline btn-sm" id="exportEmployeesPdfBtn">📄 Gerar PDF</button>
+                            </div>
                         </div>
                         <div class="report-action-item">
                             <div>
-                                <strong>Posição Completa de Estoque + Curva ABC</strong>
-                                <span>SKUs, endereços, saldos, estoques mínimo/alvo, custo unitário, valor total e classificação ABC.</span>
+                                <strong>2. Posição Completa de Estoque + Curva ABC</strong>
+                                <span>SKUs, endereços, saldos, estoques mínimo/alvo, custo unitário, valor total imobilizado e classificação ABC (Pareto).</span>
                             </div>
-                            <button class="btn btn-primary" id="exportProductsCsvBtn">Exportar Estoque (.CSV)</button>
+                            <div class="action-group" style="flex-shrink:0;">
+                                <button class="btn btn-primary btn-sm" id="exportProductsCsvBtn">📊 Excel (.XLS)</button>
+                                <button class="btn btn-outline btn-sm" id="exportProductsPdfBtn">📄 Gerar PDF</button>
+                            </div>
                         </div>
                         <div class="report-action-item">
                             <div>
-                                <strong>Plano de Compras &amp; Reposição Crítica</strong>
-                                <span>Itens em ruptura ou ponto de pedido com cálculo automático de compra sugerida e orçamento.</span>
+                                <strong>3. Plano de Compras &amp; Reposição Crítica</strong>
+                                <span>Itens em ruptura ou ponto de pedido com cálculo automático de compra sugerida (cobertura 2x mín.) e orçamento CAPEX/OPEX.</span>
                             </div>
-                            <button class="btn btn-secondary" id="exportLowStockCsvBtn">Exportar Reposição (.CSV)</button>
+                            <div class="action-group" style="flex-shrink:0;">
+                                <button class="btn btn-secondary btn-sm" id="exportLowStockCsvBtn">📊 Excel (.XLS)</button>
+                                <button class="btn btn-outline btn-sm" id="exportLowStockPdfBtn">📄 Gerar PDF</button>
+                            </div>
                         </div>
                         <div class="report-action-item">
                             <div>
-                                <strong>Kardex Completo de Movimentações por Turno</strong>
-                                <span>Entradas, saídas, avarias, impacto financeiro, responsáveis e documentos/NF.</span>
+                                <strong>4. Kardex Completo de Movimentações por Turno</strong>
+                                <span>Histórico auditável de entradas (NF), expedições, baixas por avaria/perda, impacto financeiro e responsáveis.</span>
                             </div>
-                            <button class="btn btn-secondary" id="exportMovementsCsvBtn">Exportar Kardex (.CSV)</button>
+                            <div class="action-group" style="flex-shrink:0;">
+                                <button class="btn btn-secondary btn-sm" id="exportMovementsCsvBtn">📊 Excel (.XLS)</button>
+                                <button class="btn btn-outline btn-sm" id="exportMovementsPdfBtn">📄 Gerar PDF</button>
+                            </div>
                         </div>
                         <div class="report-action-item">
                             <div>
-                                <strong>Relatório de Cautelas &amp; Patrimônio</strong>
-                                <span>Histórico nominal de retiradas, prazos, atrasos e devoluções por colaborador.</span>
+                                <strong>5. Relatório de Cautelas &amp; Patrimônio</strong>
+                                <span>Controle nominal de retiradas de coletores/ativos, valor sob responsabilidade, prazos, atrasos e devoluções.</span>
                             </div>
-                            <button class="btn btn-secondary" id="exportLoansCsvBtn">Exportar Cautelas (.CSV)</button>
+                            <div class="action-group" style="flex-shrink:0;">
+                                <button class="btn btn-secondary btn-sm" id="exportLoansCsvBtn">📊 Excel (.XLS)</button>
+                                <button class="btn btn-outline btn-sm" id="exportLoansPdfBtn">📄 Gerar PDF</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1412,7 +1427,7 @@
     <div id="toastContainer" class="toast-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js?v=3.9"></script>
-    <script src="estoque.js?v=3.9"></script>
+    <script src="supabase-config.js?v=4.0"></script>
+    <script src="estoque.js?v=4.0"></script>
 </body>
 </html>

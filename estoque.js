@@ -2799,7 +2799,7 @@ function printLoanReceipt(loanId) {
     win.document.close();
 }
 
-// Exportação CSV com BOM UTF-8
+// Exportação CSV com BOM UTF-8 (para planilha modelo)
 function downloadCsv(filename, headers, rows) {
     const escapeCsvCell = (val) => {
         const str = val === null || val === undefined ? '' : String(val);
@@ -2825,6 +2825,288 @@ function downloadCsv(filename, headers, rows) {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+}
+
+// Exportação nativa formatada para Microsoft Excel (.xls com tabela corporativa, KPIs e bordas)
+function downloadExcelReport(filenameBase, reportTitle, kpis, headers, rows) {
+    const nowStr = fmtDateTime(new Date().toISOString());
+    const userLabel = currentUser ? `${currentUser.name} (${currentUser.username})` : state.siteLeaderName || 'Kelvin';
+
+    const kpiCells = (kpis || [])
+        .map(
+            (k) =>
+                `<td colspan="2" style="background:#f1f5f9; border:1px solid #cbd5e1; padding:8px; font-family:Calibri,Arial,sans-serif;">
+                    <div style="font-size:10pt; color:#475569;">${escapeHtml(k.label)}</div>
+                    <div style="font-size:12pt; font-weight:bold; color:#0f172a;">${escapeHtml(k.value)}</div>
+                </td>`
+        )
+        .join('');
+
+    const headerCells = headers
+        .map(
+            (h) =>
+                `<th style="background:#1e3a8a; color:#ffffff; font-weight:bold; padding:8px 10px; border:1px solid #1e293b; text-align:left; font-family:Calibri,Arial,sans-serif; font-size:10.5pt;">${escapeHtml(
+                    h
+                )}</th>`
+        )
+        .join('');
+
+    const bodyRows =
+        rows.length > 0
+            ? rows
+                  .map((row, idx) => {
+                      const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+                      const cells = row
+                          .map(
+                              (cell) =>
+                                  `<td style="background:${bg}; padding:6px 10px; border:1px solid #cbd5e1; font-family:Calibri,Arial,sans-serif; font-size:10pt; color:#0f172a;">${escapeHtml(
+                                      cell === null || cell === undefined ? '' : String(cell)
+                                  )}</td>`
+                          )
+                          .join('');
+                      return `<tr>${cells}</tr>`;
+                  })
+                  .join('')
+            : `<tr><td colspan="${headers.length}" style="padding:14px; text-align:center;">Nenhum registro encontrado.</td></tr>`;
+
+    const htmlExcel = `
+        <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+        <head>
+            <meta charset="UTF-8">
+            <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Relatorio CD</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+        </head>
+        <body>
+            <table border="1" cellspacing="0" cellpadding="4">
+                <tr>
+                    <td colspan="${headers.length}" style="background:#0f172a; color:#ffffff; font-size:14pt; font-weight:bold; padding:12px; font-family:Calibri,Arial,sans-serif;">
+                        CONTROLE DE CUSTOS E ESTOQUE — ${escapeHtml(reportTitle.toUpperCase())}
+                    </td>
+                </tr>
+                <tr>
+                    <td colspan="${headers.length}" style="background:#e2e8f0; color:#1e293b; font-size:10pt; padding:6px 10px; font-family:Calibri,Arial,sans-serif;">
+                        <strong>Unidade / CD:</strong> ${escapeHtml(state.siteName)} &nbsp;|&nbsp;
+                        <strong>Turno:</strong> ${escapeHtml(state.activeShift)} &nbsp;|&nbsp;
+                        <strong>Emitido por:</strong> ${escapeHtml(userLabel)} &nbsp;|&nbsp;
+                        <strong>Data/Hora:</strong> ${escapeHtml(nowStr)}
+                    </td>
+                </tr>
+                ${kpiCells ? `<tr>${kpiCells}</tr>` : ''}
+                <tr><td colspan="${headers.length}"></td></tr>
+                <tr>${headerCells}</tr>
+                ${bodyRows}
+            </table>
+        </body>
+        </html>
+    `;
+
+    const blob = new Blob(['\uFEFF' + htmlExcel], {
+        type: 'application/vnd.ms-excel;charset=utf-8;'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filenameBase}_${new Date().toISOString().slice(0, 10)}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+// Gerador de Relatório Executivo em PDF (Janela Corporativa Formatada pronta para Salvar como PDF / Impressão)
+function openExecutivePdfReport(reportTitle, reportSubtitle, kpis, headers, rows) {
+    const win = window.open('', '_blank', 'width=1080,height=780');
+    if (!win) {
+        showToast('Habilite pop-ups no navegador para gerar o relatório em PDF.', 'error');
+        return;
+    }
+
+    const nowStr = fmtDateTime(new Date().toISOString());
+    const userLabel = currentUser ? `${currentUser.name} (${currentUser.username})` : state.siteLeaderName || 'Kelvin';
+
+    const kpisHtml = (kpis || [])
+        .map(
+            (k) => `
+            <div class="kpi-box">
+                <span class="kpi-lbl">${escapeHtml(k.label)}</span>
+                <strong class="kpi-val">${escapeHtml(k.value)}</strong>
+            </div>
+        `
+        )
+        .join('');
+
+    const thHtml = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+    const trHtml =
+        rows.length > 0
+            ? rows
+                  .map(
+                      (row) =>
+                          `<tr>${row
+                              .map((cell) => `<td>${escapeHtml(cell === null || cell === undefined ? '' : String(cell))}</td>`)
+                              .join('')}</tr>`
+                  )
+                  .join('')
+            : `<tr><td colspan="${headers.length}" style="text-align:center; padding:20px; color:#64748b;">Nenhum registro encontrado neste CD.</td></tr>`;
+
+    win.document.write(`
+        <!DOCTYPE html>
+        <html lang="pt-BR">
+        <head>
+            <meta charset="UTF-8">
+            <title>${escapeHtml(reportTitle)} | ${escapeHtml(state.siteName)}</title>
+            <style>
+                @page { size: landscape; margin: 12mm; }
+                * { box-sizing: border-box; }
+                body {
+                    font-family: 'Segoe UI', Arial, sans-serif;
+                    color: #0f172a;
+                    margin: 0;
+                    padding: 24px;
+                    background: #ffffff;
+                }
+                .top-actions {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    background: #0f172a;
+                    color: #fff;
+                    padding: 12px 18px;
+                    border-radius: 8px;
+                    margin-bottom: 20px;
+                }
+                .top-actions button {
+                    background: #2563eb;
+                    color: #fff;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 6px;
+                    font-weight: 700;
+                    cursor: pointer;
+                    font-size: 13px;
+                }
+                .report-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                    border-bottom: 2px solid #0f172a;
+                    padding-bottom: 14px;
+                    margin-bottom: 18px;
+                }
+                .report-header h1 {
+                    margin: 0 0 4px 0;
+                    font-size: 20px;
+                    color: #0f172a;
+                }
+                .report-header p {
+                    margin: 0;
+                    font-size: 12.5px;
+                    color: #475569;
+                }
+                .meta-box {
+                    text-align: right;
+                    font-size: 12px;
+                    line-height: 1.5;
+                    color: #334155;
+                }
+                .kpi-strip {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+                    gap: 10px;
+                    margin-bottom: 18px;
+                }
+                .kpi-box {
+                    background: #f8fafc;
+                    border: 1px solid #cbd5e1;
+                    border-left: 4px solid #2563eb;
+                    padding: 10px 12px;
+                    border-radius: 6px;
+                }
+                .kpi-lbl {
+                    display: block;
+                    font-size: 11px;
+                    text-transform: uppercase;
+                    color: #64748b;
+                    margin-bottom: 4px;
+                }
+                .kpi-val {
+                    font-size: 16px;
+                    color: #0f172a;
+                }
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    font-size: 11.5px;
+                }
+                th {
+                    background: #1e293b;
+                    color: #ffffff;
+                    text-align: left;
+                    padding: 8px 9px;
+                    border: 1px solid #1e293b;
+                    font-weight: 600;
+                }
+                td {
+                    padding: 7px 9px;
+                    border: 1px solid #cbd5e1;
+                    color: #1e293b;
+                }
+                tr:nth-child(even) td {
+                    background: #f8fafc;
+                }
+                .signatures {
+                    display: flex;
+                    justify-content: space-between;
+                    gap: 48px;
+                    margin-top: 46px;
+                    page-break-inside: avoid;
+                }
+                .sig-line {
+                    flex: 1;
+                    border-top: 1px solid #0f172a;
+                    text-align: center;
+                    padding-top: 6px;
+                    font-size: 12px;
+                }
+                @media print {
+                    .top-actions { display: none !important; }
+                    body { padding: 0; }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="top-actions">
+                <div>
+                    <strong>Visualização de Documento Executivo (PDF)</strong> — Escolha <em>"Salvar como PDF"</em> no destino da impressão.
+                </div>
+                <button onclick="window.print()">🖨️ Salvar como PDF / Imprimir</button>
+            </div>
+            <div class="report-header">
+                <div>
+                    <h1>${escapeHtml(reportTitle)}</h1>
+                    <p>${escapeHtml(reportSubtitle)}</p>
+                </div>
+                <div class="meta-box">
+                    <strong>Unidade / CD:</strong> ${escapeHtml(state.siteName)}<br>
+                    <strong>Turno Operacional:</strong> ${escapeHtml(state.activeShift)}<br>
+                    <strong>Emitido por:</strong> ${escapeHtml(userLabel)}<br>
+                    <strong>Emissão:</strong> ${escapeHtml(nowStr)}
+                </div>
+            </div>
+            ${kpisHtml ? `<div class="kpi-strip">${kpisHtml}</div>` : ''}
+            <table>
+                <thead><tr>${thHtml}</tr></thead>
+                <tbody>${trHtml}</tbody>
+            </table>
+            <div class="signatures">
+                <div class="sig-line">Responsável pela Emissão<br><strong>${escapeHtml(userLabel)}</strong></div>
+                <div class="sig-line">Validação Gerencial / Site Leader Master<br><strong>${escapeHtml(state.siteName)}</strong></div>
+            </div>
+            <script>
+                setTimeout(() => { window.print(); }, 350);
+            <\/script>
+        </body>
+        </html>
+    `);
+    win.document.close();
 }
 
 // Inicialização e Eventos
@@ -3568,23 +3850,34 @@ document.addEventListener('DOMContentLoaded', () => {
     // Impressão Executiva
     document.getElementById('printReportBtn').addEventListener('click', () => window.print());
 
-    // Exportação CSV de RH & Folha Salarial
-    document.getElementById('exportEmployeesCsvBtn').addEventListener('click', () => {
+    // =========================================================================
+    // CENTRAL DE RELATÓRIOS EXECUTIVOS (EXCEL .XLS & PDF PARA OS 5 RELATÓRIOS)
+    // =========================================================================
+
+    // 1. Quadro de Colaboradores, Salários & Turnover (RH)
+    function buildRhReportData() {
+        const hr = computeHrMetrics();
+        const kpis = [
+            { label: 'Efetivo Ativo + Férias', value: `${hr.workforceCount} colaboradores` },
+            { label: 'Folha Base Mensal', value: fmtCurrency(hr.basePayroll) },
+            { label: 'Encargos & Benefícios', value: fmtCurrency(hr.totalBenefits) },
+            { label: 'Custo Total Mensal RH', value: fmtCurrency(hr.totalHrCost) },
+            { label: 'Índice de Turnover', value: `${hr.turnoverRate.toFixed(1)}% (${hr.dismissalsCount} deslig.)` }
+        ];
         const headers = [
-            'Matricula',
+            'Matrícula',
             'Nome Completo',
             'CPF',
             'Celular / WhatsApp',
-            'Cargo / Funcao',
+            'Cargo / Função',
             'Setor do CD',
             'Turno',
-            'Data Admissao',
-            'Salario Base (R$)',
-            'Beneficios e Encargos (R$)',
-            'Custo Total Mensal (R$)',
+            'Admissão',
+            'Salário Base (R$)',
+            'Encargos/Benef. (R$)',
+            'Custo Total (R$)',
             'Status',
-            'Data Desligamento',
-            'Motivo Desligamento'
+            'Desligamento / Motivo'
         ];
         const rows = (state.employees || []).map((e) => [
             e.code,
@@ -3595,144 +3888,303 @@ document.addEventListener('DOMContentLoaded', () => {
             e.sector,
             e.shift,
             fmtDate(e.hireDate),
-            Number(e.salary || 0).toFixed(2).replace('.', ','),
-            Number(e.benefits || 0).toFixed(2).replace('.', ','),
-            ((Number(e.salary) || 0) + (Number(e.benefits) || 0)).toFixed(2).replace('.', ','),
+            fmtCurrency(e.salary || 0),
+            fmtCurrency(e.benefits || 0),
+            fmtCurrency((Number(e.salary) || 0) + (Number(e.benefits) || 0)),
             e.status,
-            e.dismissDate ? fmtDate(e.dismissDate) : '',
-            e.dismissReason || ''
+            e.status === 'DESLIGADO'
+                ? `${e.dismissDate ? fmtDate(e.dismissDate) : ''} - ${e.dismissReason || ''}`
+                : '-'
         ]);
-        downloadCsv(`rh_custos_colaboradores_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
-        showToast('Planilha de RH, Salários e Turnover exportada!', 'success');
+        return { kpis, headers, rows };
+    }
+
+    document.getElementById('exportEmployeesCsvBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildRhReportData();
+        downloadExcelReport('relatorio_rh_salarios_turnover', 'Quadro de Colaboradores, Salários e Turnover (RH)', kpis, headers, rows);
+        showToast('Planilha Excel (.XLS) de RH, Salários e Turnover gerada!', 'success');
     });
 
-    // Exportações CSV de Estoque
-    document.getElementById('exportProductsCsvBtn').addEventListener('click', () => {
-        const { abcMap } = computeAbcAnalysis();
+    document.getElementById('exportEmployeesPdfBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildRhReportData();
+        openExecutivePdfReport(
+            'Relatório de Quadro de Colaboradores, Salários & Turnover (RH)',
+            'Demonstrativo analítico da folha de pagamento, encargos, headcount e rotatividade por turno',
+            kpis,
+            headers,
+            rows
+        );
+    });
+
+    // 2. Posição Completa de Estoque + Curva ABC
+    function buildProductsReportData() {
+        const { totalValue, ranked, abcMap } = computeAbcAnalysis();
+        const totalUnits = state.products.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0);
+        const classACount = ranked.filter((r) => r.abcClass === 'A').length;
+        const criticalCount = state.products.filter((p) => getProductStatus(p).code !== 'OK').length;
+
+        const kpis = [
+            { label: 'Total de SKUs no CD', value: `${state.products.length} SKUs` },
+            { label: 'Volume Físico Total', value: `${fmtNumber(totalUnits)} unidades` },
+            { label: 'Valor Imobilizado Total', value: fmtCurrency(totalValue) },
+            { label: 'Itens Classe A (80% Valor)', value: `${classACount} SKUs` },
+            { label: 'SKUs em Alerta / Ruptura', value: `${criticalCount} SKUs` }
+        ];
         const headers = [
             'SKU',
             'Mercadoria',
             'Classe ABC',
             'Categoria',
-            'Endereco Logistico',
-            'Unidade',
+            'Endereço Logístico',
+            'Unid.',
             'Saldo Atual',
-            'Ponto de Pedido (Min)',
-            'Custo Unitario (R$)',
+            'Estoque Mín.',
+            'Custo Unit. (R$)',
             'Valor Total (R$)',
             'Status Operacional',
-            'Observacoes'
+            'Observações'
         ];
         const rows = state.products.map((p) => [
             p.sku,
             p.name,
-            abcMap[p.id] || 'C',
+            `Classe ${abcMap[p.id] || 'C'}`,
             p.category,
             p.location,
             p.unit,
             p.quantity,
             p.minStock,
-            Number(p.price || 0).toFixed(2).replace('.', ','),
-            ((Number(p.quantity) || 0) * (Number(p.price) || 0)).toFixed(2).replace('.', ','),
+            fmtCurrency(p.price || 0),
+            fmtCurrency((Number(p.quantity) || 0) * (Number(p.price) || 0)),
             getProductStatus(p).label,
             p.notes || ''
         ]);
-        downloadCsv(`estoque_abc_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
-        showToast('Relatório de Estoque + Curva ABC exportado!', 'success');
+        return { kpis, headers, rows };
+    }
+
+    document.getElementById('exportProductsCsvBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildProductsReportData();
+        downloadExcelReport('posicao_estoque_curva_abc', 'Posição Completa de Estoque + Curva ABC', kpis, headers, rows);
+        showToast('Planilha Excel (.XLS) de Estoque + Curva ABC gerada!', 'success');
     });
 
-    document.getElementById('exportLowStockCsvBtn').addEventListener('click', () => {
+    document.getElementById('exportProductsPdfBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildProductsReportData();
+        openExecutivePdfReport(
+            'Posição Completa de Estoque + Matriz de Curva ABC',
+            'Inventário valorizado por SKU, endereçamento físico, ponto de pedido e classificação Pareto (80/15/5)',
+            kpis,
+            headers,
+            rows
+        );
+    });
+
+    // 3. Plano de Compras & Reposição Crítica
+    function buildReplenishmentReportData() {
         const { abcMap } = computeAbcAnalysis();
         const criticals = state.products.filter((p) => {
             const code = getProductStatus(p).code;
             return code === 'LOW' || code === 'ZERO';
         });
+        let totalBudget = 0;
+        let totalUnitsToBuy = 0;
+
         const headers = [
             'SKU',
             'Mercadoria',
             'Classe ABC',
             'Categoria',
-            'Endereco',
+            'Endereço',
+            'Status Atual',
             'Saldo Atual',
-            'Ponto de Pedido',
-            'Compra Sugerida (2x Min)',
-            'Orcamento Estimado (R$)'
+            'Estoque Mínimo',
+            'Compra Sugerida (2x Mín)',
+            'Custo Unit. (R$)',
+            'Orçamento Estimado (R$)'
         ];
         const rows = criticals.map((p) => {
             const suggested = Math.max((Number(p.minStock) || 10) * 2 - (Number(p.quantity) || 0), 1);
             const estCost = suggested * (Number(p.price) || 0);
+            totalBudget += estCost;
+            totalUnitsToBuy += suggested;
             return [
                 p.sku,
                 p.name,
-                abcMap[p.id] || 'C',
+                `Classe ${abcMap[p.id] || 'C'}`,
                 p.category,
                 p.location,
-                p.quantity,
-                p.minStock,
-                suggested,
-                estCost.toFixed(2).replace('.', ',')
+                getProductStatus(p).label,
+                `${p.quantity} ${p.unit}`,
+                `${p.minStock} ${p.unit}`,
+                `${suggested} ${p.unit}`,
+                fmtCurrency(p.price || 0),
+                fmtCurrency(estCost)
             ];
         });
-        downloadCsv(`plano_compras_reposicao_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
-        showToast('Plano de reposição exportado!', 'success');
+
+        const zeroCount = criticals.filter((p) => getProductStatus(p).code === 'ZERO').length;
+        const lowCount = criticals.filter((p) => getProductStatus(p).code === 'LOW').length;
+        const kpis = [
+            { label: 'SKUs Críticos p/ Compra', value: `${criticals.length} SKUs` },
+            { label: 'Em Ruptura Total (Zero)', value: `${zeroCount} SKUs` },
+            { label: 'Em Ponto de Pedido', value: `${lowCount} SKUs` },
+            { label: 'Volume Total a Comprar', value: `${fmtNumber(totalUnitsToBuy)} unid.` },
+            { label: 'Orçamento CAPEX/OPEX', value: fmtCurrency(totalBudget) }
+        ];
+        return { kpis, headers, rows };
+    }
+
+    document.getElementById('exportLowStockCsvBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildReplenishmentReportData();
+        downloadExcelReport('plano_compras_reposicao', 'Plano de Compras e Reposição Crítica do CD', kpis, headers, rows);
+        showToast('Planilha Excel (.XLS) do Plano de Compras e Reposição gerada!', 'success');
     });
 
-    document.getElementById('exportMovementsCsvBtn').addEventListener('click', () => {
+    document.getElementById('exportLowStockPdfBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildReplenishmentReportData();
+        openExecutivePdfReport(
+            'Plano de Compras & Reposição Crítica de Estoque (CAPEX / OPEX)',
+            'Relação de itens em ruptura ou abaixo do estoque de segurança com orçamento necessário para cobertura 2x',
+            kpis,
+            headers,
+            rows
+        );
+    });
+
+    // 4. Kardex Completo de Movimentações por Turno
+    function buildKardexReportData() {
+        const inMovs = state.movements.filter((m) => m.type === 'IN').length;
+        const outMovs = state.movements.filter((m) => m.type === 'OUT').length;
+        const lossMovs = state.movements.filter((m) => m.type === 'LOSS');
+        const lossVal = lossMovs.reduce((acc, m) => {
+            const prod = state.products.find((p) => p.id === m.productId);
+            const price = m.unitPrice !== undefined ? Number(m.unitPrice) : prod ? Number(prod.price) || 0 : 0;
+            return acc + (Number(m.quantity) || 0) * price;
+        }, 0);
+
+        const kpis = [
+            { label: 'Total de Lançamentos', value: `${state.movements.length} registros` },
+            { label: 'Entradas / Recebimentos NF', value: `${inMovs} operações` },
+            { label: 'Saídas / Expedições', value: `${outMovs} operações` },
+            { label: 'Ocorrências de Avaria/Perda', value: `${lossMovs.length} baixas` },
+            { label: 'Custo de Perdas & Avarias', value: fmtCurrency(lossVal) }
+        ];
         const headers = [
-            'Data/Hora',
-            'Natureza',
+            'Data / Hora',
+            'Natureza da Operação',
             'SKU',
             'Mercadoria',
             'Quantidade',
+            'Impacto Fin. (R$)',
             'Saldo Final',
             'Turno',
-            'Responsavel',
-            'Documento / Justificativa'
+            'Responsável',
+            'Documento / NF / Justificativa'
         ];
-        const rows = state.movements.map((m) => [
-            fmtDateTime(m.date),
-            getMovementTypeBadge(m.type).label,
-            m.sku,
-            m.productName,
-            m.quantity,
-            m.balanceAfter,
-            m.shift,
-            m.responsible,
-            m.reason
-        ]);
-        downloadCsv(`kardex_movimentacoes_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
-        showToast('Kardex exportado para CSV!', 'success');
+        const rows = state.movements.map((m) => {
+            const t = getMovementTypeBadge(m.type);
+            const prod = state.products.find((p) => p.id === m.productId);
+            const unitPrice = m.unitPrice !== undefined ? Number(m.unitPrice) : prod ? Number(prod.price) || 0 : 0;
+            const impact = (Number(m.quantity) || 0) * unitPrice;
+            return [
+                fmtDateTime(m.date),
+                t.label,
+                m.sku,
+                m.productName,
+                `${t.sign}${m.quantity}`,
+                fmtCurrency(impact),
+                m.balanceAfter,
+                m.shift,
+                m.responsible,
+                m.reason
+            ];
+        });
+        return { kpis, headers, rows };
+    }
+
+    document.getElementById('exportMovementsCsvBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildKardexReportData();
+        downloadExcelReport('kardex_completo_movimentacoes', 'Kardex Completo de Movimentações por Turno', kpis, headers, rows);
+        showToast('Planilha Excel (.XLS) do Kardex Completo gerada!', 'success');
     });
 
-    document.getElementById('exportLoansCsvBtn').addEventListener('click', () => {
-        const headers = [
-            'Colaborador',
-            'Matricula',
-            'Setor/Turno',
-            'SKU',
-            'Ativo/Item',
-            'Quantidade',
-            'Retirada',
-            'Limite Devolucao',
-            'Data Devolucao',
-            'Status',
-            'Observacoes'
+    document.getElementById('exportMovementsPdfBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildKardexReportData();
+        openExecutivePdfReport(
+            'Kardex Completo & Auditável de Movimentações por Turno',
+            'Rastreabilidade integral de entradas (NF), expedições, perdas/avarias e conciliações de inventário',
+            kpis,
+            headers,
+            rows
+        );
+    });
+
+    // 5. Relatório de Cautelas & Patrimônio
+    function buildLoansReportData() {
+        const activeLoans = state.loans.filter((l) => l.status !== 'RETURNED');
+        const overdueLoans = activeLoans.filter((l) => getLoanComputedStatus(l).code === 'OVERDUE');
+        const returnedLoans = state.loans.filter((l) => l.status === 'RETURNED');
+        const activeValue = activeLoans.reduce((acc, l) => {
+            const prod = state.products.find((p) => p.id === l.productId);
+            return acc + (prod ? Number(prod.price) || 0 : 0) * (Number(l.quantity) || 1);
+        }, 0);
+
+        const kpis = [
+            { label: 'Total Histórico Cautelas', value: `${state.loans.length} termos` },
+            { label: 'Ativos em Uso Agora', value: `${activeLoans.length} cautelas` },
+            { label: 'Cautelas em Atraso', value: `${overdueLoans.length} alertas` },
+            { label: 'Devoluções Concluídas', value: `${returnedLoans.length} baixas` },
+            { label: 'Patrimônio em Cautela Ativa', value: fmtCurrency(activeValue) }
         ];
-        const rows = state.loans.map((l) => [
-            l.employeeName,
-            l.employeeId,
-            l.department,
-            l.sku,
-            l.productName,
-            l.quantity,
-            fmtDateTime(l.loanDate),
-            fmtDateTime(l.dueDate),
-            l.returnedDate ? fmtDateTime(l.returnedDate) : 'Em aberto',
-            getLoanComputedStatus(l).label,
-            l.notes || ''
-        ]);
-        downloadCsv(`relatorio_cautelas_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
-        showToast('Relatório de cautelas exportado!', 'success');
+        const headers = [
+            'Colaborador Responsável',
+            'Matrícula',
+            'Setor / Turno',
+            'SKU',
+            'Ativo / Equipamento',
+            'Qtd.',
+            'Valor Patr. (R$)',
+            'Data/Hora Retirada',
+            'Prazo Devolução',
+            'Data Devolução',
+            'Status',
+            'Nº Série / Patrimônio / Obs.'
+        ];
+        const rows = state.loans.map((l) => {
+            const prod = state.products.find((p) => p.id === l.productId);
+            const valResp = (prod ? Number(prod.price) || 0 : 0) * (Number(l.quantity) || 1);
+            return [
+                l.employeeName,
+                l.employeeId,
+                l.department,
+                l.sku,
+                l.productName,
+                l.quantity,
+                fmtCurrency(valResp),
+                fmtDateTime(l.loanDate),
+                fmtDateTime(l.dueDate),
+                l.returnedDate ? fmtDateTime(l.returnedDate) : 'Em aberto',
+                getLoanComputedStatus(l).label,
+                l.notes || ''
+            ];
+        });
+        return { kpis, headers, rows };
+    }
+
+    document.getElementById('exportLoansCsvBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildLoansReportData();
+        downloadExcelReport('relatorio_cautelas_patrimonio', 'Relatório de Cautelas e Patrimônio Operacional', kpis, headers, rows);
+        showToast('Planilha Excel (.XLS) de Cautelas e Patrimônio gerada!', 'success');
+    });
+
+    document.getElementById('exportLoansPdfBtn').addEventListener('click', () => {
+        const { kpis, headers, rows } = buildLoansReportData();
+        openExecutivePdfReport(
+            'Relatório Nominal de Cautelas & Controle de Patrimônio',
+            'Acompanhamento de equipamentos, coletores, rádios e ativos sob guarda de colaboradores da operação',
+            kpis,
+            headers,
+            rows
+        );
     });
 
     // Planilha Modelo CSV
